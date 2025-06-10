@@ -3,181 +3,68 @@
 import os
 import sys
 
-# Detect headless environment BEFORE any graphics imports
-def is_headless_environment():
-    """Detect if we're in a headless environment"""
-    # Check for DISPLAY environment variable
-    if not os.environ.get('DISPLAY'):
-        return True
-    
-    # Check if we're in a common CI/remote environment
-    ci_indicators = ['CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'JENKINS_URL', 'BUILD_NUMBER']
-    if any(os.environ.get(indicator) for indicator in ci_indicators):
-        return True
-    
-    # Check for common virtualization/container indicators
-    if os.path.exists('/.dockerenv') or os.environ.get('container'):
-        return True
-    
-    # Try a basic X11 display check
-    try:
-        import subprocess
-        result = subprocess.run(['xdpyinfo'], capture_output=True, timeout=5)
-        if result.returncode != 0:
-            return True
-    except:
-        return True
-    
-    return False
-
-# Exit early if headless, before importing any graphics libraries
-if is_headless_environment():
-    print("""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                            🚀 ILK SPACE GAME 🚀                              ║
-║                        A 3D Space Exploration Game                           ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-❌ GRAPHICS NOT AVAILABLE
-This appears to be a headless environment without display support.
-The game requires OpenGL and a desktop environment to run.
-
-🎮 SYSTEM REQUIREMENTS:
-• Python 3.7+ with tkinter support
-• OpenGL-capable graphics driver
-• Desktop environment (X11, Wayland, Windows, macOS)
-• At least 512MB RAM
-• 100MB free disk space
-
-📦 DEPENDENCIES:
-• ursina==5.2.0 (3D game engine)
-• numpy==1.26.3 (mathematical operations)
-• pillow==10.2.0 (image processing)
-
-🚀 HOW TO START THE GAME:
-1. On your LOCAL machine, clone this repository:
-   git clone https://github.com/lokopo/ILK
-
-2. Install Python dependencies:
-   pip install -r requirements.txt
-   
-3. Run the game:
-   python3 space_game.py
-   OR
-   ./run_me.py (automatically sets up virtual environment)
-
-✨ GAME FEATURES:
-• 🌌 Procedurally generated space with 15 planets
-• 🚀 Full 6-degrees-of-freedom space flight controls
-• 🏗️ Planetary landing and surface exploration
-• 💾 Save/Load game system with persistent world state
-• 🎯 Projectile weapon system
-• 🖼️ Beautiful space skybox with slow rotation
-• 🎮 Two distinct control modes: Space and Surface
-• 📸 Built-in screenshot system
-• ⚙️ Configurable graphics settings
-
-🎮 DETAILED CONTROLS:
-┌─ SPACE MODE (6DOF Flight) ─────────────────────────────────────────────────┐
-│ WASD        ➤ Move forward/backward/left/right                             │
-│ Space/Shift ➤ Move up/down                                                 │
-│ Q/E         ➤ Roll left/right                                              │
-│ Mouse       ➤ Pitch and yaw (free look)                                    │
-│ F7          ➤ Toggle first/third-person view                               │
-│ Left Click  ➤ Fire projectiles                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─ SURFACE MODE (FPS-style) ─────────────────────────────────────────────────┐
-│ WASD        ➤ Walk around                                                   │
-│ Space       ➤ Jump (double jump available)                                 │
-│ Mouse       ➤ Look around (mouse lock enabled)                             │
-│ Collision   ➤ Full collision detection with buildings                      │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─ UNIVERSAL CONTROLS ───────────────────────────────────────────────────────┐
-│ ESC         ➤ Pause menu (Save/Load/Quit options)                          │
-│ F6          ➤ Take screenshot (saved to screenshots/ folder)               │
-│ F8          ➤ Switch between Space and Surface modes                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-🎯 GAMEPLAY MECHANICS:
-• Approach planets in space mode to trigger landing prompts
-• Each planet has a unique name and randomized properties
-• Landing transitions you to surface mode with procedural buildings
-• Save files are stored in JSON format with timestamps
-• Screenshots automatically organize by timestamp
-• Game world persists between sessions
-
-🏗️ GAME WORLD:
-• Space: 15 procedurally placed planets in a 1000×1000×1000 unit space
-• Planets: Randomized size (20-50 units) and colors
-• Surface: 100×100 unit terrain with 10 randomized buildings
-• Buildings: Various heights (4-8 units) with collision detection
-• Skybox: 6-sided space texture that rotates over 2 hours
-
-💾 SAVE SYSTEM:
-• Automatic timestamping (YYYYMMDD_HHMMSS format)
-• Saves player position, rotation, and world state
-• Preserves planet positions and properties
-• JSON format for easy inspection/modification
-• Load system automatically selects most recent save
-
-🐛 DEVELOPMENT STATUS:
-This game is in SUPER EARLY ALPHA stage. Current features are stable
-but more gameplay systems are planned:
-• Trading and economy
-• Mission system
-• NPC interactions
-• Ship upgrades
-• Resource management
-
-📁 PROJECT STRUCTURE:
-• space_game.py ➤ Main game file
-• run_me.py ➤ Auto-setup launcher
-• requirements.txt ➤ Python dependencies
-• assets/textures/ ➤ Game textures (skybox)
-• saves/ ➤ Save game files (auto-created)
-• screenshots/ ➤ Screenshot storage (auto-created)
-
-🔧 TROUBLESHOOTING:
-• If textures don't load: Check assets/textures/ folder exists
-• If save/load fails: Check file permissions in game directory  
-• If controls feel sluggish: Adjust mouse sensitivity in code
-• If performance is poor: Try reducing planet count or disabling skybox
-
-💡 FOR DEVELOPERS:
-The game is built with Ursina (Python 3D engine based on Panda3D).
-Main classes: SpaceController, TownController, SceneManager, Planet.
-Easy to modify and extend - check the source code!
-
-🌟 ENJOY EXPLORING THE COSMOS! 🌟
-""")
-    sys.exit(0)
-
-# Only import graphics libraries if we passed the headless check
-print("🎮 Initializing graphics engine...")
+# Add error handling for headless environments
 try:
     from ursina import *
     from ursina.prefabs.first_person_controller import FirstPersonController
-    import random
-    import numpy as np
-    import math
-    import json
-    import pickle
-    from datetime import datetime
-except ImportError as e:
-    print(f"❌ Missing dependency: {e}")
-    print("💡 Please install requirements: pip install -r requirements.txt")
-    sys.exit(1)
+    GRAPHICS_AVAILABLE = True
+except Exception as e:
+    print(f"Graphics not available: {e}")
+    print("This appears to be a headless environment.")
+    print("The game requires OpenGL support to run.")
+    GRAPHICS_AVAILABLE = False
 
-# Initialize Ursina with comprehensive error handling
+if not GRAPHICS_AVAILABLE:
+    print("\n=== ILK SPACE GAME ===")
+    print("This is a 3D space exploration game that requires graphics support.")
+    print("\nTo run this game, you need:")
+    print("1. A system with OpenGL support")
+    print("2. A desktop environment (not headless/remote)")
+    print("3. Python dependencies installed (see requirements.txt)")
+    print("\nHow to start the game on a local system:")
+    print("1. Clone this repository")
+    print("2. Install dependencies: pip install -r requirements.txt")
+    print("3. Run: python3 space_game.py")
+    print("   OR")
+    print("4. Run: ./run_me.py (sets up virtual environment automatically)")
+    print("\n=== GAME FEATURES ===")
+    print("• Space exploration with multiple randomly generated planets")
+    print("• Landing system - get close to planets to land on them")
+    print("• Two game modes: Space (6DOF movement) and Surface (FPS-style)")
+    print("• Save/Load game system")
+    print("• Beautiful rotating skybox")
+    print("• Physics-based movement and collision detection")
+    print("\n=== CONTROLS ===")
+    print("Space Mode:")
+    print("  WASD - Move forward/back/left/right")
+    print("  Space/Shift - Move up/down")
+    print("  Q/E - Roll left/right")
+    print("  Mouse - Look around")
+    print("  F7 - Toggle third-person view")
+    print("\nSurface Mode:")
+    print("  WASD - Walk")
+    print("  Space - Jump (double jump available)")
+    print("  Mouse - Look around")
+    print("\nGeneral:")
+    print("  ESC - Pause menu (Save/Load/Quit)")
+    print("  F6 - Take screenshot")
+    print("  F8 - Switch between space and surface modes")
+    print("  Left Click - Shoot projectiles (space mode)")
+    sys.exit(0)
+
+import random
+import numpy as np
+import math
+import json
+import pickle
+from datetime import datetime
+
+# Initialize Ursina with better error handling
 try:
     app = Ursina(borderless=False)  # Make window resizable and movable
-    print("✅ Graphics initialized successfully!")
 except Exception as e:
-    print(f"❌ Failed to initialize graphics: {e}")
-    print("💡 Ensure you have proper graphics drivers and OpenGL support.")
-    print("💡 Try updating your graphics drivers or running on a different system.")
+    print(f"Failed to initialize graphics: {e}")
+    print("Make sure you have proper graphics drivers and OpenGL support.")
     sys.exit(1)
 
 # Create a rotating skybox instead of stars
@@ -197,18 +84,16 @@ class RotatingSkybox(Entity):
         self.textures = {}
         texture_files = ['right', 'left', 'top', 'bottom', 'front', 'back']
         
-        print("🖼️ Loading skybox textures...")
         for face in texture_files:
             try:
                 texture_path = f'assets/textures/skybox_{face}.png'
                 if os.path.exists(texture_path):
                     self.textures[face] = load_texture(texture_path)
-                    print(f"  ✅ {face}.png")
                 else:
-                    print(f"  ⚠️ {face}.png not found, using fallback")
+                    print(f"Warning: Skybox texture not found: {texture_path}")
                     self.textures[face] = load_texture('white_cube')  # Fallback
             except Exception as e:
-                print(f"  ❌ Error loading {face}.png: {e}")
+                print(f"Error loading texture {face}: {e}")
                 self.textures[face] = load_texture('white_cube')
         
         # Apply textures to the skybox
@@ -556,7 +441,6 @@ class SceneManager:
         
     def initialize_town(self):
         if not self.town_controller:
-            print("🏗️ Generating surface environment...")
             # Create main ground
             ground = Entity(
                 model='plane',
@@ -605,7 +489,6 @@ class SceneManager:
             # Create and position the town controller on the podium
             self.town_controller = TownController()
             self.town_controller.position = Vec3(0, 1.5, 0)
-            print("  ✅ Surface environment ready!")
     
     def switch_to_town(self):
         if self.current_state == GameState.SPACE:
@@ -680,19 +563,19 @@ def save_game():
         
         with open(filename, 'w') as f:
             json.dump(game_state, f, indent=2)
-        print(f'💾 Game saved to {filename}')
+        print(f'Game saved to {filename}')
     except Exception as e:
-        print(f'❌ Error saving game: {e}')
+        print(f'Error saving game: {e}')
 
 def load_game():
     try:
         if not os.path.exists('saves'):
-            print('⚠️ No saves directory found')
+            print('No saves directory found')
             return
             
         save_files = [f for f in os.listdir('saves') if f.endswith('.json')]
         if not save_files:
-            print('⚠️ No save files found')
+            print('No save files found')
             return
             
         # Load the most recent save file
@@ -721,12 +604,11 @@ def load_game():
             planet.scale = p_data[3]
             planets.append(planet)
         
-        print(f'📂 Game loaded from {latest_save}')
+        print(f'Game loaded from {latest_save}')
     except Exception as e:
-        print(f'❌ Error loading game: {e}')
+        print(f'Error loading game: {e}')
 
 def quit_game():
-    print("👋 Thanks for playing ILK Space Game!")
     application.quit()
 
 save_button.on_click = save_game
@@ -762,7 +644,6 @@ class Planet(Entity):
 # Create planets with error handling
 planets = []
 try:
-    print("🌌 Generating procedural solar system...")
     for _ in range(15):
         pos = Vec3(
             random.uniform(-500, 500),
@@ -772,9 +653,8 @@ try:
         if pos.length() > 100:
             planet = Planet(position=pos)
             planets.append(planet)
-    print(f"  ✅ Created {len(planets)} planets")
 except Exception as e:
-    print(f"❌ Error creating planets: {e}")
+    print(f"Error creating planets: {e}")
 
 # Landing prompt UI
 landing_prompt = Panel(
@@ -852,7 +732,6 @@ def update():
 def land_on_planet():
     global nearby_planet
     if nearby_planet:
-        print(f"🚀 Landing on {nearby_planet.name}...")
         # Switch to town mode
         scene_manager.switch_to_town()
         # Hide landing prompt
@@ -914,9 +793,9 @@ def input(key):
             timestamp = int(time.time())
             filename = f'screenshots/screenshot_{timestamp}.png'
             base.win.saveScreenshot(Filename(filename))
-            print(f'📸 Screenshot saved to {filename}')
+            print(f'Screenshot saved to {filename}')
         except Exception as e:
-            print(f'❌ Error taking screenshot: {e}')
+            print(f'Error taking screenshot: {e}')
     
     if key == 'f7':  # Toggle view and axis visibility
         if scene_manager.current_state == GameState.SPACE:
@@ -924,21 +803,17 @@ def input(key):
             player.axis_indicator.enabled = player.third_person
             if player.third_person:
                 camera.position = (0, 0, -15)
-                print("👁️ Third-person view enabled")
             else:
                 camera.position = (0, 0, 0)
-                print("👁️ First-person view enabled")
     
     if key == 'f8':  # Toggle between space and town
         try:
             if scene_manager.current_state == GameState.SPACE:
-                print("🏘️ Switching to surface mode...")
                 scene_manager.switch_to_town()
             else:
-                print("🚀 Switching to space mode...")
                 scene_manager.switch_to_space()
         except Exception as e:
-            print(f'❌ Error switching scenes: {e}')
+            print(f'Error switching scenes: {e}')
     
     if key == 'left mouse down' and not paused:
         if scene_manager.current_state == GameState.SPACE:
@@ -956,16 +831,14 @@ def input(key):
                     curve=curve.linear
                 )
                 destroy(bullet, delay=2)
-                print("💥 Projectile fired!")
             except Exception as e:
-                print(f'❌ Error shooting projectile: {e}')
+                print(f'Error shooting projectile: {e}')
 
 # Run the game
 if __name__ == "__main__":
-    print("🎮 Starting ILK Space Game...")
-    print("📋 Press ESC for pause menu, F6 for screenshots, F7 for third-person view, F8 to switch modes")
-    print("🚀 Use WASD to move, mouse to look around, Space/Shift for up/down in space mode")
+    print("Starting ILK Space Game...")
+    print("Press ESC for pause menu, F6 for screenshots, F7 for third-person view, F8 to switch modes")
     try:
         app.run()
     except Exception as e:
-        print(f"❌ Error running game: {e}") 
+        print(f"Error running game: {e}")
