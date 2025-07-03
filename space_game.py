@@ -12,6 +12,199 @@ from datetime import datetime
 
 app = Ursina(borderless=False)  # Make window resizable and movable
 
+# Trading and Economy System
+class Commodity:
+    def __init__(self, name, base_price, category="general"):
+        self.name = name
+        self.base_price = base_price
+        self.category = category
+        
+    def get_price(self, planet_type="generic", supply_demand_modifier=1.0):
+        """Calculate price based on planet type and market conditions"""
+        price_modifiers = {
+            "agricultural": {"food": 0.7, "technology": 1.3, "minerals": 1.1, "luxury": 1.2},
+            "industrial": {"minerals": 0.8, "technology": 0.9, "food": 1.4, "luxury": 1.1},
+            "mining": {"minerals": 0.6, "technology": 1.5, "food": 1.3, "luxury": 1.4},
+            "tech": {"technology": 0.8, "luxury": 0.9, "food": 1.2, "minerals": 1.3},
+            "luxury": {"luxury": 0.8, "food": 1.1, "technology": 1.2, "minerals": 1.2}
+        }
+        
+        modifier = price_modifiers.get(planet_type, {}).get(self.category, 1.0)
+        final_price = self.base_price * modifier * supply_demand_modifier
+        return max(1, int(final_price))  # Minimum price of 1 credit
+
+class CargoSystem:
+    def __init__(self, max_capacity=100):
+        self.max_capacity = max_capacity
+        self.cargo = {}  # {commodity_name: quantity}
+        
+    def get_used_capacity(self):
+        return sum(self.cargo.values())
+        
+    def get_free_capacity(self):
+        return self.max_capacity - self.get_used_capacity()
+        
+    def can_add(self, commodity_name, quantity):
+        return self.get_free_capacity() >= quantity
+        
+    def add_cargo(self, commodity_name, quantity):
+        if self.can_add(commodity_name, quantity):
+            self.cargo[commodity_name] = self.cargo.get(commodity_name, 0) + quantity
+            return True
+        return False
+        
+    def remove_cargo(self, commodity_name, quantity):
+        current = self.cargo.get(commodity_name, 0)
+        if current >= quantity:
+            self.cargo[commodity_name] = current - quantity
+            if self.cargo[commodity_name] == 0:
+                del self.cargo[commodity_name]
+            return True
+        return False
+        
+    def get_cargo_list(self):
+        return [(name, qty) for name, qty in self.cargo.items()]
+
+class MarketSystem:
+    def __init__(self):
+        # Define available commodities
+        self.commodities = {
+            "food": Commodity("Food", 10, "food"),
+            "minerals": Commodity("Minerals", 25, "minerals"),
+            "technology": Commodity("Technology", 50, "technology"),
+            "luxury_goods": Commodity("Luxury Goods", 75, "luxury"),
+            "medicine": Commodity("Medicine", 40, "food"),
+            "weapons": Commodity("Weapons", 60, "technology"),
+            "fuel": Commodity("Fuel", 15, "minerals"),
+            "spices": Commodity("Spices", 35, "luxury")
+        }
+        
+        # Planet market data: {planet_name: {commodity: (supply_level, demand_level)}}
+        self.planet_markets = {}
+        
+    def generate_market_for_planet(self, planet_name, planet_type="generic"):
+        """Generate a market with random supply/demand for a planet"""
+        market = {}
+        for commodity_name in self.commodities.keys():
+            # Random supply/demand between 0.5 and 2.0
+            supply_demand = random.uniform(0.5, 2.0)
+            market[commodity_name] = supply_demand
+        
+        # Store planet type for price calculations
+        self.planet_markets[planet_name] = {
+            'market': market,
+            'type': planet_type
+        }
+        
+    def get_buy_price(self, planet_name, commodity_name):
+        """Price player pays to buy from planet"""
+        if planet_name not in self.planet_markets:
+            return 0
+            
+        commodity = self.commodities.get(commodity_name)
+        if not commodity:
+            return 0
+            
+        planet_data = self.planet_markets[planet_name]
+        supply_demand = planet_data['market'].get(commodity_name, 1.0)
+        planet_type = planet_data['type']
+        
+        return commodity.get_price(planet_type, supply_demand)
+        
+    def get_sell_price(self, planet_name, commodity_name):
+        """Price player gets when selling to planet"""
+        buy_price = self.get_buy_price(planet_name, commodity_name)
+        return max(1, int(buy_price * 0.8))  # 20% margin for the market
+
+class PlayerWallet:
+    def __init__(self, starting_credits=1000):
+        self.credits = starting_credits
+        
+    def can_afford(self, amount):
+        return self.credits >= amount
+        
+    def spend(self, amount):
+        if self.can_afford(amount):
+            self.credits -= amount
+            return True
+        return False
+        
+    def earn(self, amount):
+        self.credits += amount
+
+# Ship Upgrade System
+class ShipUpgrades:
+    def __init__(self):
+        self.cargo_capacity = 50  # Starting cargo capacity
+        self.engine_level = 1     # Engine upgrade level (affects speed)
+        self.fuel_efficiency = 1  # Fuel efficiency level
+        
+        # Upgrade costs (exponentially increasing)
+        self.upgrade_costs = {
+            'cargo': 200,    # Cost for next cargo upgrade
+            'engine': 500,   # Cost for next engine upgrade  
+            'fuel': 300      # Cost for next fuel upgrade
+        }
+        
+    def can_afford_upgrade(self, upgrade_type):
+        cost = self.upgrade_costs.get(upgrade_type, 0)
+        return player_wallet.can_afford(cost)
+        
+    def upgrade_cargo(self):
+        if self.can_afford_upgrade('cargo'):
+            cost = self.upgrade_costs['cargo']
+            player_wallet.spend(cost)
+            
+            # Increase cargo capacity
+            old_capacity = self.cargo_capacity
+            self.cargo_capacity += 25
+            player_cargo.max_capacity = self.cargo_capacity
+            
+            # Increase cost for next upgrade
+            self.upgrade_costs['cargo'] = int(cost * 1.5)
+            
+            print(f"Cargo upgraded! Capacity: {old_capacity} -> {self.cargo_capacity}")
+            return True
+        return False
+        
+    def upgrade_engine(self):
+        if self.can_afford_upgrade('engine'):
+            cost = self.upgrade_costs['engine']
+            player_wallet.spend(cost)
+            
+            # Increase engine level and player speed
+            self.engine_level += 1
+            player.speed += 2
+            player.max_speed += 10
+            
+            # Increase cost for next upgrade
+            self.upgrade_costs['engine'] = int(cost * 1.8)
+            
+            print(f"Engine upgraded! Level: {self.engine_level}, Speed increased!")
+            return True
+        return False
+        
+    def upgrade_fuel_efficiency(self):
+        if self.can_afford_upgrade('fuel'):
+            cost = self.upgrade_costs['fuel']
+            player_wallet.spend(cost)
+            
+            # Increase fuel efficiency level
+            self.fuel_efficiency += 1
+            
+            # Increase cost for next upgrade
+            self.upgrade_costs['fuel'] = int(cost * 1.4)
+            
+            print(f"Fuel efficiency upgraded! Level: {self.fuel_efficiency}")
+            return True
+        return False
+
+# Global systems
+market_system = MarketSystem()
+player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
+player_wallet = PlayerWallet(starting_credits=500)
+ship_upgrades = ShipUpgrades()
+
 # Create a rotating skybox instead of stars
 class RotatingSkybox(Entity):
     def __init__(self):
@@ -160,9 +353,26 @@ class SpaceController(Entity):
         self.status_text = Text(
             parent=camera.ui,
             text='Speed: 0%',
-            position=(-0.3, 0.45),
+            position=(-0.45, 0.45),
             scale=0.8,
             color=color.white
+        )
+        
+        # Credits and cargo display
+        self.credits_text = Text(
+            parent=camera.ui,
+            text='Credits: 500',
+            position=(-0.45, 0.4),
+            scale=0.8,
+            color=color.yellow
+        )
+        
+        self.cargo_text = Text(
+            parent=camera.ui,
+            text='Cargo: 0/50',
+            position=(-0.45, 0.35),
+            scale=0.8,
+            color=color.cyan
         )
 
     def update(self):
@@ -210,6 +420,11 @@ class SpaceController(Entity):
             # Update status text with speed info
             speed_percentage = int((self.velocity.length() / self.max_speed) * 100)
             self.status_text.text = f'Speed: {speed_percentage}%'
+            
+            # Update credits and cargo display
+            self.credits_text.text = f'Credits: {player_wallet.credits}'
+            used_capacity = player_cargo.get_used_capacity()
+            self.cargo_text.text = f'Cargo: {used_capacity}/{player_cargo.max_capacity}'
 
 # Player setup with proper 3D movement
 player = SpaceController()
@@ -373,6 +588,7 @@ class SceneManager:
         self.town_entities = []
         self.town_controller = None
         self.space_controller = None
+        self.current_planet = None  # Track which planet player is on
         
     def initialize_space(self):
         self.space_controller = player
@@ -425,6 +641,72 @@ class SceneManager:
             # Add ground first, then podium, then buildings
             self.town_entities.extend([ground, podium])
             
+            # Add trading post (large blue building near the podium)
+            trading_post = Entity(
+                model='cube',
+                color=color.blue,
+                texture='white_cube',
+                position=(10, 3, 0),  # Next to podium
+                scale=(6, 6, 6),
+                collider='box'
+            )
+            
+            # Add trading post sign
+            trading_sign = Text(
+                parent=trading_post,
+                text='TRADING POST\n[T] to Trade',
+                position=(0, 0, 3.1),
+                scale=100,
+                color=color.white,
+                billboard=True
+            )
+            
+            self.town_entities.extend([trading_post, trading_sign])
+            
+            # Add shipyard (large orange building on the other side)
+            shipyard = Entity(
+                model='cube',
+                color=color.orange,
+                texture='white_cube',
+                position=(-10, 3, 0),  # Opposite side from trading post
+                scale=(6, 6, 6),
+                collider='box'
+            )
+            
+            # Add shipyard sign
+            shipyard_sign = Text(
+                parent=shipyard,
+                text='SHIPYARD\n[U] for Upgrades',
+                position=(0, 0, 3.1),
+                scale=100,
+                color=color.white,
+                billboard=True
+            )
+            
+            self.town_entities.extend([shipyard, shipyard_sign])
+            
+            # Add some NPCs (simple colored cubes for now)
+            npc_positions = [(15, 1, 15), (-15, 1, -15), (20, 1, -10), (-10, 1, 20)]
+            for i, pos in enumerate(npc_positions):
+                npc = Entity(
+                    model='cube',
+                    color=color.random_color(),
+                    position=pos,
+                    scale=(1, 2, 1),
+                    collider='box'
+                )
+                
+                npc_sign = Text(
+                    parent=npc,
+                    text=f'Citizen {i+1}',
+                    position=(0, 0, 1.1),
+                    scale=50,
+                    color=color.white,
+                    billboard=True
+                )
+                
+                self.town_entities.extend([npc, npc_sign])
+            
             # Create and position the town controller on the podium
             self.town_controller = TownController()
             self.town_controller.position = Vec3(0, 1.5, 0)
@@ -434,6 +716,8 @@ class SceneManager:
             # Store and reset space controller state
             self.space_controller.disable()
             self.space_controller.status_text.enabled = False
+            self.space_controller.credits_text.enabled = False
+            self.space_controller.cargo_text.enabled = False
             
             # Hide space entities
             for entity in self.space_entities:
@@ -469,9 +753,14 @@ class SceneManager:
             # Reset and setup space camera/controller
             self.space_controller.enable()
             self.space_controller.status_text.enabled = True
+            self.space_controller.credits_text.enabled = True
+            self.space_controller.cargo_text.enabled = True
             camera.parent = self.space_controller
             camera.rotation = (0, 0, 0)
             camera.position = (0, 0, -15) if self.space_controller.third_person else (0, 0, 0)
+            
+            # Clear current planet when leaving
+            self.current_planet = None
             
             self.current_state = GameState.SPACE
 
@@ -550,9 +839,22 @@ quit_button.on_click = quit_game
 # Planet class
 class Planet(Entity):
     def __init__(self, position=(0,0,0)):
+        # Define planet types and their characteristics
+        planet_types = {
+            "agricultural": {"color": color.green, "name_prefix": "Agri"},
+            "industrial": {"color": color.gray, "name_prefix": "Forge"},
+            "mining": {"color": color.brown, "name_prefix": "Mine"},
+            "tech": {"color": color.blue, "name_prefix": "Tech"},
+            "luxury": {"color": color.magenta, "name_prefix": "Haven"}
+        }
+        
+        # Randomly select planet type
+        self.planet_type = random.choice(list(planet_types.keys()))
+        planet_data = planet_types[self.planet_type]
+        
         super().__init__(
             model='sphere',
-            color=color.random_color(),
+            color=planet_data["color"].tint(random.uniform(-0.3, 0.3)),
             position=position,
             scale=random.uniform(20, 50),  # Scaled down from 2000-5000
             texture='white_cube',
@@ -563,7 +865,10 @@ class Planet(Entity):
         # Add landing detection radius
         self.landing_radius = self.scale * 2
         # Add name for the planet
-        self.name = f"Planet {random.randint(1, 1000)}"
+        self.name = f"{planet_data['name_prefix']}-{random.randint(100, 999)}"
+        
+        # Generate market for this planet
+        market_system.generate_market_for_planet(self.name, self.planet_type)
     
     def update(self):
         pass  # Remove rotation update
@@ -627,10 +932,285 @@ cancel_button = Button(
 # Variable to track the planet we're near
 nearby_planet = None
 
+# Trading UI
+class TradingUI:
+    def __init__(self):
+        self.active = False
+        self.current_planet = None
+        
+        # Main trading panel
+        self.panel = Panel(
+            parent=camera.ui,
+            model='quad',
+            scale=(0.9, 0.9),
+            color=color.black66,
+            enabled=False
+        )
+        
+        # Title
+        self.title = Text(
+            parent=self.panel,
+            text='TRADING POST',
+            position=(0, 0.4),
+            scale=2,
+            color=color.white
+        )
+        
+        # Current planet info
+        self.planet_info = Text(
+            parent=self.panel,
+            text='',
+            position=(-0.4, 0.3),
+            scale=1,
+            color=color.cyan
+        )
+        
+        # Player's credits and cargo
+        self.player_info = Text(
+            parent=self.panel,
+            text='',
+            position=(0.4, 0.3),
+            scale=1,
+            color=color.yellow
+        )
+        
+        # Commodity list
+        self.commodity_list = Text(
+            parent=self.panel,
+            text='',
+            position=(-0.4, -0.1),
+            scale=0.8,
+            color=color.white
+        )
+        
+        # Instructions
+        self.instructions = Text(
+            parent=self.panel,
+            text='Use 1-8 to buy, SHIFT+1-8 to sell\nESC to close',
+            position=(0, -0.4),
+            scale=1,
+            color=color.light_gray
+        )
+        
+    def show(self, planet_name):
+        self.active = True
+        self.current_planet = planet_name
+        self.panel.enabled = True
+        self.update_display()
+        
+        # Pause game and show cursor
+        mouse.locked = False
+        mouse.visible = True
+        
+    def hide(self):
+        self.active = False
+        self.current_planet = None
+        self.panel.enabled = False
+        
+        # Resume game and hide cursor
+        mouse.locked = True
+        mouse.visible = False
+        
+    def update_display(self):
+        if not self.current_planet:
+            return
+            
+        # Update planet info
+        planet_type = market_system.planet_markets[self.current_planet]['type']
+        self.planet_info.text = f'Planet: {self.current_planet}\nType: {planet_type.title()}'
+        
+        # Update player info
+        self.player_info.text = f'Credits: {player_wallet.credits}\nCargo: {player_cargo.get_used_capacity()}/{player_cargo.max_capacity}'
+        
+        # Update commodity list
+        commodity_text = "COMMODITIES:\n\n"
+        commodities = list(market_system.commodities.keys())
+        for i, commodity_name in enumerate(commodities[:8]):  # Show first 8 commodities
+            buy_price = market_system.get_buy_price(self.current_planet, commodity_name)
+            sell_price = market_system.get_sell_price(self.current_planet, commodity_name)
+            player_has = player_cargo.cargo.get(commodity_name, 0)
+            commodity_text += f"{i+1}. {commodity_name.replace('_', ' ').title()}\n"
+            commodity_text += f"   Buy: {buy_price}  Sell: {sell_price}  Have: {player_has}\n\n"
+        
+        self.commodity_list.text = commodity_text
+        
+    def handle_input(self, key):
+        if not self.active or not self.current_planet:
+            return False
+            
+        # Handle number keys for buying
+        if key in '12345678':
+            commodity_index = int(key) - 1
+            commodities = list(market_system.commodities.keys())
+            if commodity_index < len(commodities):
+                commodity_name = commodities[commodity_index]
+                self.buy_commodity(commodity_name)
+                return True
+                
+        # Handle shift+number for selling
+        elif key.startswith('shift+') and key[-1] in '12345678':
+            commodity_index = int(key[-1]) - 1
+            commodities = list(market_system.commodities.keys())
+            if commodity_index < len(commodities):
+                commodity_name = commodities[commodity_index]
+                self.sell_commodity(commodity_name)
+                return True
+                
+        return False
+        
+    def buy_commodity(self, commodity_name):
+        buy_price = market_system.get_buy_price(self.current_planet, commodity_name)
+        
+        if player_wallet.can_afford(buy_price) and player_cargo.can_add(commodity_name, 1):
+            player_wallet.spend(buy_price)
+            player_cargo.add_cargo(commodity_name, 1)
+            print(f"Bought 1 {commodity_name.replace('_', ' ')} for {buy_price} credits")
+            self.update_display()
+        elif not player_wallet.can_afford(buy_price):
+            print("Not enough credits!")
+        else:
+            print("Cargo hold full!")
+            
+    def sell_commodity(self, commodity_name):
+        if player_cargo.cargo.get(commodity_name, 0) > 0:
+            sell_price = market_system.get_sell_price(self.current_planet, commodity_name)
+            player_cargo.remove_cargo(commodity_name, 1)
+            player_wallet.earn(sell_price)
+            print(f"Sold 1 {commodity_name.replace('_', ' ')} for {sell_price} credits")
+            self.update_display()
+        else:
+            print(f"You don't have any {commodity_name.replace('_', ' ')}!")
+
+# Create trading UI
+trading_ui = TradingUI()
+
+# Upgrade UI
+class UpgradeUI:
+    def __init__(self):
+        self.active = False
+        
+        # Main upgrade panel
+        self.panel = Panel(
+            parent=camera.ui,
+            model='quad',
+            scale=(0.8, 0.8),
+            color=color.black66,
+            enabled=False
+        )
+        
+        # Title
+        self.title = Text(
+            parent=self.panel,
+            text='SHIPYARD - UPGRADES',
+            position=(0, 0.35),
+            scale=2,
+            color=color.orange
+        )
+        
+        # Player info
+        self.player_info = Text(
+            parent=self.panel,
+            text='',
+            position=(0, 0.25),
+            scale=1,
+            color=color.yellow
+        )
+        
+        # Upgrade options
+        self.upgrade_list = Text(
+            parent=self.panel,
+            text='',
+            position=(0, -0.05),
+            scale=1,
+            color=color.white
+        )
+        
+        # Instructions
+        self.instructions = Text(
+            parent=self.panel,
+            text='Press 1-3 to purchase upgrades\nESC to close',
+            position=(0, -0.35),
+            scale=1,
+            color=color.light_gray
+        )
+        
+    def show(self):
+        self.active = True
+        self.panel.enabled = True
+        self.update_display()
+        
+        # Pause game and show cursor
+        mouse.locked = False
+        mouse.visible = True
+        
+    def hide(self):
+        self.active = False
+        self.panel.enabled = False
+        
+        # Resume game and hide cursor
+        mouse.locked = True
+        mouse.visible = False
+        
+    def update_display(self):
+        # Update player info
+        self.player_info.text = f'Credits: {player_wallet.credits}'
+        
+        # Update upgrade options
+        upgrade_text = "AVAILABLE UPGRADES:\n\n"
+        
+        # Cargo upgrade
+        cargo_cost = ship_upgrades.upgrade_costs['cargo']
+        cargo_affordable = "✓" if ship_upgrades.can_afford_upgrade('cargo') else "✗"
+        upgrade_text += f"1. Cargo Hold Upgrade - {cargo_cost} credits {cargo_affordable}\n"
+        upgrade_text += f"   Current: {ship_upgrades.cargo_capacity} -> {ship_upgrades.cargo_capacity + 25}\n\n"
+        
+        # Engine upgrade
+        engine_cost = ship_upgrades.upgrade_costs['engine']
+        engine_affordable = "✓" if ship_upgrades.can_afford_upgrade('engine') else "✗"
+        upgrade_text += f"2. Engine Upgrade - {engine_cost} credits {engine_affordable}\n"
+        upgrade_text += f"   Current Level: {ship_upgrades.engine_level} -> {ship_upgrades.engine_level + 1}\n\n"
+        
+        # Fuel efficiency upgrade
+        fuel_cost = ship_upgrades.upgrade_costs['fuel']
+        fuel_affordable = "✓" if ship_upgrades.can_afford_upgrade('fuel') else "✗"
+        upgrade_text += f"3. Fuel Efficiency - {fuel_cost} credits {fuel_affordable}\n"
+        upgrade_text += f"   Current Level: {ship_upgrades.fuel_efficiency} -> {ship_upgrades.fuel_efficiency + 1}\n"
+        
+        self.upgrade_list.text = upgrade_text
+        
+    def handle_input(self, key):
+        if not self.active:
+            return False
+            
+        if key == '1':
+            if ship_upgrades.upgrade_cargo():
+                self.update_display()
+            else:
+                print("Cannot afford cargo upgrade!")
+            return True
+        elif key == '2':
+            if ship_upgrades.upgrade_engine():
+                self.update_display()
+            else:
+                print("Cannot afford engine upgrade!")
+            return True
+        elif key == '3':
+            if ship_upgrades.upgrade_fuel_efficiency():
+                self.update_display()
+            else:
+                print("Cannot afford fuel efficiency upgrade!")
+            return True
+                
+        return False
+
+# Create upgrade UI
+upgrade_ui = UpgradeUI()
+
 def update():
     global nearby_planet
     
-    if not paused and scene_manager.current_state == GameState.SPACE:
+    if not paused and not trading_ui.active and not upgrade_ui.active:
+        if scene_manager.current_state == GameState.SPACE:
         # Check if player is near any planet
         nearby_planet = None
         for planet in planets:
@@ -638,29 +1218,43 @@ def update():
                 nearby_planet = planet
                 break
         
-        # Show/hide landing prompt based on proximity
-        if nearby_planet and not landing_prompt.enabled:
-            landing_prompt.enabled = True
-            landing_text.text = f"Approaching {nearby_planet.name}\nDo you want to land?"
-            land_button.enabled = True
-            cancel_button.enabled = True
-            
-            # Freeze player and release mouse
-            player.enabled = False
-            mouse.locked = False
-            mouse.visible = True
-        elif not nearby_planet and landing_prompt.enabled:
-            landing_prompt.enabled = False
-            
-            # Unfreeze player and capture mouse
-            player.enabled = True
-            mouse.locked = True
-            mouse.visible = False
+            # Show/hide landing prompt based on proximity
+            if nearby_planet and not landing_prompt.enabled:
+                landing_prompt.enabled = True
+                landing_text.text = f"Approaching {nearby_planet.name}\nDo you want to land?"
+                land_button.enabled = True
+                cancel_button.enabled = True
+                
+                # Freeze player and release mouse
+                player.enabled = False
+                mouse.locked = False
+                mouse.visible = True
+            elif not nearby_planet and landing_prompt.enabled:
+                landing_prompt.enabled = False
+                
+                # Unfreeze player and capture mouse
+                player.enabled = True
+                mouse.locked = True
+                mouse.visible = False
+                
+        elif scene_manager.current_state == GameState.TOWN:
+            # Check if player is near trading post in town
+            if scene_manager.town_controller:
+                player_pos = scene_manager.town_controller.position
+                trading_post_pos = Vec3(10, 3, 0)  # Position of trading post
+                distance = (player_pos - trading_post_pos).length()
+                
+                # Show trading prompt if close to trading post
+                if distance < 10:  # Within 10 units of trading post
+                    # Display prompt on screen
+                    pass  # We'll handle this with T key press
 
 # Function to handle landing
 def land_on_planet():
     global nearby_planet
     if nearby_planet:
+        # Set current planet in scene manager
+        scene_manager.current_planet = nearby_planet
         # Switch to town mode
         scene_manager.switch_to_town()
         # Hide landing prompt
@@ -696,7 +1290,21 @@ paused = False
 def input(key):
     global paused
     
+    # Handle UI input first
+    if trading_ui.handle_input(key):
+        return
+    if upgrade_ui.handle_input(key):
+        return
+    
     if key == 'escape':
+        # Close UIs if open
+        if trading_ui.active:
+            trading_ui.hide()
+            return
+        if upgrade_ui.active:
+            upgrade_ui.hide()
+            return
+            
         paused = not paused
         pause_panel.enabled = paused
         save_button.enabled = paused
@@ -734,6 +1342,38 @@ def input(key):
             scene_manager.switch_to_town()
         else:
             scene_manager.switch_to_space()
+    
+    if key == 't' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Open trading if near trading post
+        if scene_manager.town_controller:
+            player_pos = scene_manager.town_controller.position
+            trading_post_pos = Vec3(10, 3, 0)
+            distance = (player_pos - trading_post_pos).length()
+            
+            if distance < 10:  # Within range of trading post
+                # Use the current planet the player landed on
+                if scene_manager.current_planet:
+                    trading_ui.show(scene_manager.current_planet.name)
+                else:
+                    # Fallback for testing
+                    planet_name = "Local Trading Post"
+                    if planet_name not in market_system.planet_markets:
+                        market_system.generate_market_for_planet(planet_name, "generic")
+                                         trading_ui.show(planet_name)
+            else:
+                print("You need to be closer to the trading post!")
+    
+    if key == 'u' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Open upgrades if near shipyard
+        if scene_manager.town_controller:
+            player_pos = scene_manager.town_controller.position
+            shipyard_pos = Vec3(-10, 3, 0)  # Position of shipyard
+            distance = (player_pos - shipyard_pos).length()
+            
+            if distance < 10:  # Within range of shipyard
+                upgrade_ui.show()
+            else:
+                print("You need to be closer to the shipyard!")
     
     if key == 'left mouse down' and not paused:
         if scene_manager.current_state == GameState.SPACE:
