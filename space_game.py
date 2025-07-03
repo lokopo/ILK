@@ -10,6 +10,11 @@ import json
 import pickle
 from datetime import datetime
 
+# Transport System Imports
+from enum import Enum
+from dataclasses import dataclass
+from typing import List, Dict, Optional
+
 app = Ursina(borderless=False)  # Make window resizable and movable
 
 # Trading and Economy System
@@ -384,77 +389,1472 @@ class PlayerWallet:
         self.credits += amount
 
 # Ship Upgrade System
-class ShipUpgrades:
-    def __init__(self):
-        self.cargo_capacity = 50  # Starting cargo capacity
-        self.engine_level = 1     # Engine upgrade level (affects speed)
-        self.fuel_efficiency = 1  # Fuel efficiency level
+# ===== REALISTIC SHIP SYSTEMS =====
+
+class ComponentType(Enum):
+    ENGINE = "ENGINE"
+    FUEL_TANK = "FUEL_TANK"
+    LIFE_SUPPORT = "LIFE_SUPPORT"
+    HULL = "HULL"
+    SHIELDS = "SHIELDS"
+    WEAPONS = "WEAPONS"
+    CARGO_BAY = "CARGO_BAY"
+    SENSORS = "SENSORS"
+
+class ComponentCondition(Enum):
+    PERFECT = "PERFECT"
+    GOOD = "GOOD"
+    DAMAGED = "DAMAGED"
+    CRITICAL = "CRITICAL"
+    DESTROYED = "DESTROYED"
+
+@dataclass
+class ShipComponent:
+    component_type: ComponentType
+    level: int
+    condition: ComponentCondition
+    max_integrity: int
+    current_integrity: int
+    efficiency: float  # 0.0 to 1.0
+    
+    def get_performance_modifier(self):
+        """Get performance modifier based on condition"""
+        condition_modifiers = {
+            ComponentCondition.PERFECT: 1.0,
+            ComponentCondition.GOOD: 0.85,
+            ComponentCondition.DAMAGED: 0.6,
+            ComponentCondition.CRITICAL: 0.3,
+            ComponentCondition.DESTROYED: 0.0
+        }
+        return condition_modifiers[self.condition] * self.efficiency
+    
+    def take_damage(self, damage):
+        """Apply damage to component"""
+        self.current_integrity = max(0, self.current_integrity - damage)
         
-        # Upgrade costs (exponentially increasing)
-        self.upgrade_costs = {
-            'cargo': 200,    # Cost for next cargo upgrade
-            'engine': 500,   # Cost for next engine upgrade  
-            'fuel': 300      # Cost for next fuel upgrade
+        # Update condition based on integrity
+        integrity_ratio = self.current_integrity / self.max_integrity
+        if integrity_ratio >= 0.9:
+            self.condition = ComponentCondition.PERFECT
+        elif integrity_ratio >= 0.7:
+            self.condition = ComponentCondition.GOOD
+        elif integrity_ratio >= 0.4:
+            self.condition = ComponentCondition.DAMAGED
+        elif integrity_ratio > 0:
+            self.condition = ComponentCondition.CRITICAL
+        else:
+            self.condition = ComponentCondition.DESTROYED
+            
+    def repair(self, repair_amount):
+        """Repair component"""
+        self.current_integrity = min(self.max_integrity, self.current_integrity + repair_amount)
+        
+        # Update condition
+        integrity_ratio = self.current_integrity / self.max_integrity
+        if integrity_ratio >= 0.9:
+            self.condition = ComponentCondition.PERFECT
+        elif integrity_ratio >= 0.7:
+            self.condition = ComponentCondition.GOOD
+        elif integrity_ratio >= 0.4:
+            self.condition = ComponentCondition.DAMAGED
+        elif integrity_ratio > 0:
+            self.condition = ComponentCondition.CRITICAL
+
+class FuelSystem:
+    def __init__(self):
+        self.max_fuel = 100.0
+        self.current_fuel = 100.0
+        self.fuel_efficiency = 1.0  # Base efficiency
+        self.fuel_consumption_rate = 1.0  # Base consumption per unit distance
+        
+    def consume_fuel(self, distance, ship_mass=1.0, engine_efficiency=1.0):
+        """Consume fuel based on distance, mass, and engine efficiency"""
+        base_consumption = distance * self.fuel_consumption_rate * ship_mass
+        actual_consumption = base_consumption / (self.fuel_efficiency * engine_efficiency)
+        
+        self.current_fuel = max(0, self.current_fuel - actual_consumption)
+        return actual_consumption
+        
+    def refuel(self, amount):
+        """Add fuel to tank"""
+        self.current_fuel = min(self.max_fuel, self.current_fuel + amount)
+        
+    def get_fuel_percentage(self):
+        """Get fuel level as percentage"""
+        return (self.current_fuel / self.max_fuel) * 100
+        
+    def can_travel_distance(self, distance, ship_mass=1.0, engine_efficiency=1.0):
+        """Check if ship has enough fuel for distance"""
+        required_fuel = distance * self.fuel_consumption_rate * ship_mass / (self.fuel_efficiency * engine_efficiency)
+        return self.current_fuel >= required_fuel
+
+class EnhancedCrewMember:
+    def __init__(self, name=None, specialization="general"):
+        self.name = name or f"{random.choice(['Alex', 'Sam', 'Chris', 'Jordan', 'Taylor', 'Casey', 'Riley', 'Avery', 'Quinn', 'Morgan'])}-{random.randint(100, 999)}"
+        self.specialization = specialization
+        
+        # Multiple skills per crew member
+        self.skills = {
+            "engineering": random.randint(1, 10),
+            "piloting": random.randint(1, 10),
+            "combat": random.randint(1, 10),
+            "medical": random.randint(1, 10),
+            "science": random.randint(1, 10),
+            "leadership": random.randint(1, 10)
         }
         
-    def can_afford_upgrade(self, upgrade_type):
-        cost = self.upgrade_costs.get(upgrade_type, 0)
-        return player_wallet.can_afford(cost)
+        # Boost primary specialization
+        if specialization in self.skills:
+            self.skills[specialization] += random.randint(3, 7)
+            self.skills[specialization] = min(20, self.skills[specialization])
         
-    def upgrade_cargo(self):
-        if self.can_afford_upgrade('cargo'):
-            cost = self.upgrade_costs['cargo']
+        self.experience = 0
+        self.loyalty = random.randint(50, 80)
+        self.fatigue = 0  # 0-100
+        self.health = 100
+        self.wage = self.calculate_wage()
+        
+    def calculate_wage(self):
+        """Calculate wage based on skills"""
+        avg_skill = sum(self.skills.values()) / len(self.skills)
+        return int(avg_skill * 3) + random.randint(5, 15)
+        
+    def get_effective_skill(self, skill_type):
+        """Get effective skill considering fatigue and health"""
+        base_skill = self.skills.get(skill_type, 0)
+        fatigue_penalty = (self.fatigue / 100) * 0.3
+        health_penalty = (100 - self.health) / 100 * 0.2
+        
+        return max(0, base_skill * (1 - fatigue_penalty - health_penalty))
+        
+    def gain_experience(self, skill_type, amount):
+        """Gain experience in a skill"""
+        self.experience += amount
+        if skill_type in self.skills:
+            # Chance to improve skill
+            if random.random() < 0.1:  # 10% chance
+                self.skills[skill_type] = min(20, self.skills[skill_type] + 1)
+                print(f"{self.name} improved their {skill_type} skill!")
+
+class RealisticShipSystems:
+    def __init__(self):
+        # Initialize ship components
+        self.components = {
+            ComponentType.ENGINE: ShipComponent(ComponentType.ENGINE, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.FUEL_TANK: ShipComponent(ComponentType.FUEL_TANK, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.LIFE_SUPPORT: ShipComponent(ComponentType.LIFE_SUPPORT, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.HULL: ShipComponent(ComponentType.HULL, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.SHIELDS: ShipComponent(ComponentType.SHIELDS, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.WEAPONS: ShipComponent(ComponentType.WEAPONS, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.CARGO_BAY: ShipComponent(ComponentType.CARGO_BAY, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.SENSORS: ShipComponent(ComponentType.SENSORS, 1, ComponentCondition.PERFECT, 100, 100, 1.0)
+        }
+        
+        # Fuel system
+        self.fuel_system = FuelSystem()
+        
+        # Enhanced crew system
+        self.crew = []
+        self.max_crew = 10
+        
+        # Manufacturing and repair
+        self.spare_parts = {
+            "basic_components": 5,
+            "advanced_components": 2,
+            "rare_components": 0
+        }
+        
+        # Performance tracking
+        self.last_position = None
+        self.distance_traveled = 0
+        
+        # Upgrade costs
+        self.upgrade_costs = {
+            'cargo': 200,
+            'engine': 500,
+            'fuel_tank': 400,
+            'shields': 600,
+            'weapons': 700,
+            'life_support': 300
+        }
+        
+    def update(self, current_position):
+        """Update ship systems each frame"""
+        # Calculate distance traveled
+        if hasattr(self, 'last_position'):
+            distance = (current_position - self.last_position).length()
+            self.distance_traveled += distance
+            
+            # Consume fuel based on movement
+            if distance > 0:
+                engine_efficiency = self.components[ComponentType.ENGINE].get_performance_modifier()
+                fuel_efficiency = self.components[ComponentType.FUEL_TANK].get_performance_modifier()
+                ship_mass = self.calculate_ship_mass()
+                
+                fuel_consumed = self.fuel_system.consume_fuel(distance * 0.1, ship_mass, engine_efficiency * fuel_efficiency)
+                
+                # Gain crew experience for pilots
+                for crew_member in self.crew:
+                    if crew_member.specialization == "piloting":
+                        crew_member.gain_experience("piloting", distance * 0.01)
+        
+        self.last_position = current_position
+        
+        # Component wear and tear
+        self.apply_component_wear()
+        
+        # Update crew fatigue
+        self.update_crew_fatigue()
+        
+    def calculate_ship_mass(self):
+        """Calculate ship mass based on components and cargo"""
+        base_mass = 1.0
+        
+        # Add mass from components
+        for component in self.components.values():
+            base_mass += component.level * 0.1
+            
+        # Add cargo mass
+        cargo_mass = player_cargo.get_used_capacity() * 0.01
+        
+        return base_mass + cargo_mass
+        
+    def apply_component_wear(self):
+        """Apply gradual wear to components"""
+        for component in self.components.values():
+            # Random chance of minor wear
+            if random.random() < 0.0001:  # Very small chance per frame
+                component.take_damage(1)
+                
+    def update_crew_fatigue(self):
+        """Update crew fatigue over time"""
+        for crew_member in self.crew:
+            # Increase fatigue slowly
+            crew_member.fatigue = min(100, crew_member.fatigue + 0.001)
+            
+    def get_engine_performance(self):
+        """Get current engine performance"""
+        engine = self.components[ComponentType.ENGINE]
+        fuel_available = self.fuel_system.current_fuel > 0
+        
+        if not fuel_available:
+            return 0.0
+            
+        return engine.get_performance_modifier()
+        
+    def get_cargo_capacity(self):
+        """Get current cargo capacity"""
+        cargo_bay = self.components[ComponentType.CARGO_BAY]
+        base_capacity = 50 + (cargo_bay.level - 1) * 25
+        
+        return int(base_capacity * cargo_bay.get_performance_modifier())
+        
+    def get_max_speed(self):
+        """Get maximum speed based on engine and mass"""
+        engine_performance = self.get_engine_performance()
+        ship_mass = self.calculate_ship_mass()
+        
+        base_speed = 50 + (self.components[ComponentType.ENGINE].level - 1) * 10
+        
+        return base_speed * engine_performance / ship_mass
+        
+    def repair_component(self, component_type, repair_parts):
+        """Repair a component using spare parts"""
+        if component_type not in self.components:
+            return False
+            
+        component = self.components[component_type]
+        
+        # Check if we have parts
+        parts_needed = "basic_components"
+        if component.level > 3:
+            parts_needed = "advanced_components"
+        if component.level > 6:
+            parts_needed = "rare_components"
+            
+        if self.spare_parts.get(parts_needed, 0) >= repair_parts:
+            self.spare_parts[parts_needed] -= repair_parts
+            component.repair(repair_parts * 20)
+            
+            # Crew gains experience
+            for crew_member in self.crew:
+                if crew_member.specialization == "engineering":
+                    crew_member.gain_experience("engineering", repair_parts)
+                    
+            print(f"Repaired {component_type.value} using {repair_parts} {parts_needed}")
+            return True
+            
+        return False
+        
+    def upgrade_component(self, component_type):
+        """Upgrade a component"""
+        if component_type not in self.upgrade_costs:
+            return False
+            
+        cost = self.upgrade_costs[component_type]
+        
+        if player_wallet.can_afford(cost):
             player_wallet.spend(cost)
             
-            # Increase cargo capacity
-            old_capacity = self.cargo_capacity
-            self.cargo_capacity += 25
-            player_cargo.max_capacity = self.cargo_capacity
+            component = self.components[component_type]
+            component.level += 1
+            component.max_integrity += 20
+            component.current_integrity = component.max_integrity
+            component.condition = ComponentCondition.PERFECT
             
-            # Increase cost for next upgrade
-            self.upgrade_costs['cargo'] = int(cost * 1.5)
+            # Update costs
+            self.upgrade_costs[component_type] = int(cost * 1.5)
             
-            print(f"Cargo upgraded! Capacity: {old_capacity} -> {self.cargo_capacity}")
+            # Update player stats based on component
+            if component_type == ComponentType.ENGINE:
+                player.max_speed = self.get_max_speed()
+            elif component_type == ComponentType.CARGO_BAY:
+                player_cargo.max_capacity = self.get_cargo_capacity()
+                
+            print(f"{component_type.value} upgraded to level {component.level}!")
+            return True
+            
+        return False
+        
+    def hire_crew_member(self, specialization="general"):
+        """Hire a new crew member"""
+        if len(self.crew) >= self.max_crew:
+            return False
+            
+        new_crew = EnhancedCrewMember(specialization=specialization)
+        hiring_cost = new_crew.wage * 10  # 10 days advance payment
+        
+        if player_wallet.can_afford(hiring_cost):
+            player_wallet.spend(hiring_cost)
+            self.crew.append(new_crew)
+            print(f"Hired {new_crew.name} ({specialization}) for {hiring_cost} credits")
+            return True
+            
+        return False
+        
+    def get_crew_effectiveness(self, skill_type):
+        """Get total crew effectiveness for a skill"""
+        total_effectiveness = 0
+        
+        for crew_member in self.crew:
+            effectiveness = crew_member.get_effective_skill(skill_type)
+            total_effectiveness += effectiveness
+            
+        return total_effectiveness
+        
+    def get_system_status(self):
+        """Get comprehensive system status"""
+        status = {
+            'fuel_percentage': self.fuel_system.get_fuel_percentage(),
+            'engine_performance': self.get_engine_performance(),
+            'cargo_capacity': self.get_cargo_capacity(),
+            'max_speed': self.get_max_speed(),
+            'crew_count': len(self.crew),
+            'damaged_components': []
+        }
+        
+        for comp_type, component in self.components.items():
+            if component.condition in [ComponentCondition.DAMAGED, ComponentCondition.CRITICAL, ComponentCondition.DESTROYED]:
+                status['damaged_components'].append({
+                    'type': comp_type.value,
+                    'condition': component.condition.value,
+                    'integrity': component.current_integrity
+                })
+                
+        return status
+
+# ===== ENHANCED MANUFACTURING SYSTEM =====
+
+class ManufacturingProcess:
+    def __init__(self, product, inputs, processing_time, skill_required="engineering"):
+        self.product = product
+        self.inputs = inputs  # Dict of {commodity: quantity}
+        self.processing_time = processing_time  # In seconds
+        self.skill_required = skill_required
+        self.progress = 0
+        self.active = False
+        
+    def can_start(self, available_materials, crew_effectiveness):
+        """Check if manufacturing can start"""
+        for commodity, required in self.inputs.items():
+            if available_materials.get(commodity, 0) < required:
+                return False
+        return crew_effectiveness > 0
+        
+    def start_production(self, available_materials):
+        """Start the manufacturing process"""
+        if self.can_start(available_materials, 1):  # Simplified check
+            for commodity, required in self.inputs.items():
+                available_materials[commodity] -= required
+            self.active = True
+            self.progress = 0
             return True
         return False
         
-    def upgrade_engine(self):
-        if self.can_afford_upgrade('engine'):
-            cost = self.upgrade_costs['engine']
-            player_wallet.spend(cost)
+    def update(self, dt, crew_effectiveness):
+        """Update manufacturing progress"""
+        if self.active:
+            progress_rate = crew_effectiveness / 100.0  # Crew skill affects speed
+            self.progress += dt * progress_rate
             
-            # Increase engine level and player speed
-            self.engine_level += 1
-            player.speed += 2
-            player.max_speed += 10
+            if self.progress >= self.processing_time:
+                self.active = False
+                return True  # Production complete
+        return False
+
+class EnhancedManufacturing:
+    def __init__(self):
+        # Define manufacturing recipes
+        self.recipes = {
+            "advanced_components": ManufacturingProcess(
+                "advanced_components",
+                {"minerals": 10, "technology": 5, "basic_components": 3},
+                60.0,  # 1 minute
+                "engineering"
+            ),
+            "weapons": ManufacturingProcess(
+                "weapons",
+                {"minerals": 15, "advanced_components": 2, "technology": 8},
+                120.0,  # 2 minutes
+                "engineering"
+            ),
+            "medicine": ManufacturingProcess(
+                "medicine",
+                {"spices": 5, "technology": 3, "basic_components": 1},
+                90.0,  # 1.5 minutes
+                "medical"
+            ),
+            "luxury_goods": ManufacturingProcess(
+                "luxury_goods",
+                {"spices": 8, "technology": 2, "minerals": 5},
+                150.0,  # 2.5 minutes
+                "science"
+            ),
+            "basic_components": ManufacturingProcess(
+                "basic_components",
+                {"minerals": 5, "fuel": 2},
+                30.0,  # 30 seconds
+                "engineering"
+            )
+        }
+        
+        self.active_processes = {}  # Planet -> {recipe_name: ManufacturingProcess}
+        
+    def start_manufacturing(self, planet_name, recipe_name, available_materials, crew_effectiveness):
+        """Start manufacturing on a planet"""
+        if recipe_name not in self.recipes:
+            return False
             
-            # Increase cost for next upgrade
-            self.upgrade_costs['engine'] = int(cost * 1.8)
+        if planet_name not in self.active_processes:
+            self.active_processes[planet_name] = {}
             
-            print(f"Engine upgraded! Level: {self.engine_level}, Speed increased!")
+        # Create a copy of the recipe for this planet
+        recipe = ManufacturingProcess(
+            self.recipes[recipe_name].product,
+            self.recipes[recipe_name].inputs.copy(),
+            self.recipes[recipe_name].processing_time,
+            self.recipes[recipe_name].skill_required
+        )
+        
+        if recipe.start_production(available_materials):
+            self.active_processes[planet_name][recipe_name] = recipe
+            print(f"🏭 {planet_name} started manufacturing {recipe_name}")
             return True
+            
         return False
         
-    def upgrade_fuel_efficiency(self):
-        if self.can_afford_upgrade('fuel'):
-            cost = self.upgrade_costs['fuel']
-            player_wallet.spend(cost)
+    def update_manufacturing(self, planet_name, dt, crew_effectiveness, stockpiles):
+        """Update manufacturing processes for a planet"""
+        if planet_name not in self.active_processes:
+            return
             
-            # Increase fuel efficiency level
-            self.fuel_efficiency += 1
+        completed_processes = []
+        
+        for recipe_name, process in self.active_processes[planet_name].items():
+            if process.update(dt, crew_effectiveness):
+                # Production completed
+                stockpiles[process.product] = stockpiles.get(process.product, 0) + 1
+                completed_processes.append(recipe_name)
+                print(f"✅ {planet_name} completed manufacturing {process.product}")
+                
+        # Remove completed processes
+        for recipe_name in completed_processes:
+            del self.active_processes[planet_name][recipe_name]
             
-            # Increase cost for next upgrade
-            self.upgrade_costs['fuel'] = int(cost * 1.4)
+    def get_manufacturing_status(self, planet_name):
+        """Get current manufacturing status for a planet"""
+        if planet_name not in self.active_processes:
+            return {}
             
-            print(f"Fuel efficiency upgraded! Level: {self.fuel_efficiency}")
+        status = {}
+        for recipe_name, process in self.active_processes[planet_name].items():
+            progress_percentage = (process.progress / process.processing_time) * 100
+            status[recipe_name] = {
+                'progress': progress_percentage,
+                'product': process.product,
+                'time_remaining': process.processing_time - process.progress
+            }
+            
+        return status
+
+# Create global manufacturing system
+enhanced_manufacturing = EnhancedManufacturing()
+
+# ===== PERSISTENT MILITARY & POLITICAL SYSTEMS =====
+
+class MilitaryShipType(Enum):
+    PATROL = "PATROL"
+    ESCORT = "ESCORT"
+    BLOCKADE = "BLOCKADE"
+    ASSAULT = "ASSAULT"
+    CAPITAL = "CAPITAL"
+
+class WeatherType(Enum):
+    SOLAR_STORM = "SOLAR_STORM"
+    ASTEROID_FIELD = "ASTEROID_FIELD"
+    NEBULA = "NEBULA"
+    ION_STORM = "ION_STORM"
+    CLEAR = "CLEAR"
+
+@dataclass
+class WeatherEvent:
+    weather_type: WeatherType
+    position: tuple  # (x, y, z)
+    radius: float
+    intensity: float  # 0.0 to 1.0
+    duration: float  # seconds
+    start_time: float
+    
+class MilitaryShip(Entity):
+    """Physical military ships that enforce faction control"""
+    
+    def __init__(self, faction_id, ship_type, position, patrol_radius=100):
+        super().__init__(
+            model='cube',
+            position=position,
+            scale=(1.5, 0.8, 3.0),  # Military ship shape
+            color=self.get_faction_color(faction_id)
+        )
+        
+        self.faction_id = faction_id
+        self.ship_type = ship_type
+        self.patrol_radius = patrol_radius
+        self.target_position = position
+        self.speed = 8.0
+        self.weapons_strength = 50
+        self.shields = 100
+        self.patrol_center = position
+        self.last_patrol_change = 0
+        self.engagement_range = 50
+        self.hostile_factions = []
+        
+        # Set hostile factions based on relationships
+        if faction_id in faction_system.factions:
+            for other_faction, relationship in faction_system.factions[faction_id].relationships.items():
+                if relationship < -50:  # Hostile relationship
+                    self.hostile_factions.append(other_faction)
+        
+    def get_faction_color(self, faction_id):
+        """Get color based on faction"""
+        faction_colors = {
+            'terran_federation': color.blue,
+            'mars_republic': color.red,
+            'jupiter_consortium': color.orange,
+            'outer_rim_pirates': color.dark_gray,
+            'merchant_guild': color.green,
+            'independent': color.white
+        }
+        return faction_colors.get(faction_id, color.gray)
+        
+    def update(self):
+        if not paused:
+            current_time = time.time()
+            
+            # Patrol behavior
+            if self.ship_type == MilitaryShipType.PATROL:
+                self.patrol_behavior(current_time)
+            elif self.ship_type == MilitaryShipType.BLOCKADE:
+                self.blockade_behavior()
+            elif self.ship_type == MilitaryShipType.ESCORT:
+                self.escort_behavior()
+                
+            # Move toward target
+            if hasattr(self, 'target_position'):
+                direction = (self.target_position - self.position).normalized()
+                self.position += direction * self.speed * time.dt
+                
+            # Check for hostiles
+            self.check_for_hostiles()
+            
+    def patrol_behavior(self, current_time):
+        """Patrol around assigned area"""
+        if current_time - self.last_patrol_change > 30:  # Change direction every 30 seconds
+            # Pick new patrol point within radius
+            angle = random.uniform(0, 2 * 3.14159)
+            distance = random.uniform(20, self.patrol_radius)
+            
+            offset_x = distance * math.cos(angle)
+            offset_z = distance * math.sin(angle)
+            
+            self.target_position = self.patrol_center + Vec3(offset_x, 0, offset_z)
+            self.last_patrol_change = current_time
+            
+    def blockade_behavior(self):
+        """Stay in position to block access"""
+        # Blockade ships stay near their assigned position
+        if (self.position - self.patrol_center).length() > 20:
+            self.target_position = self.patrol_center
+            
+    def escort_behavior(self):
+        """Follow and protect cargo ships"""
+        # Find nearby friendly cargo ships to escort
+        for cargo_ship in unified_transport_system.cargo_ships:
+            if hasattr(cargo_ship, 'position'):
+                distance = (self.position - cargo_ship.position).length()
+                if distance < 100:  # Within escort range
+                    self.target_position = cargo_ship.position + Vec3(10, 0, 10)  # Stay nearby
+                    break
+                    
+    def check_for_hostiles(self):
+        """Check for hostile ships and player"""
+        # Check player faction standing
+        if scene_manager.current_state == GameState.SPACE and scene_manager.space_controller:
+            player_pos = scene_manager.space_controller.position
+            distance = (self.position - player_pos).length()
+            
+            if distance < self.engagement_range:
+                player_rep = faction_system.player_reputation.get(self.faction_id, 0)
+                if player_rep < -30:  # Hostile to player
+                    self.engage_target(player_pos, "Player")
+                    
+        # Check for hostile faction ships
+        all_ships = (unified_transport_system.cargo_ships + unified_transport_system.raiders + 
+                    unified_transport_system.message_ships)
+        
+        for ship in all_ships:
+            if hasattr(ship, 'position') and hasattr(ship, 'faction_id'):
+                if ship.faction_id in self.hostile_factions:
+                    distance = (self.position - ship.position).length()
+                    if distance < self.engagement_range:
+                        self.engage_target(ship.position, f"{ship.faction_id} ship")
+                        
+    def engage_target(self, target_pos, target_name):
+        """Engage hostile target"""
+        print(f"🚨 {self.faction_id} {self.ship_type.value} engaging {target_name}!")
+        
+        # Move to intercept
+        self.target_position = target_pos
+        
+        # Apply damage if close enough
+        if (self.position - target_pos).length() < 20:
+            if target_name == "Player":
+                damage = random.randint(10, 25)
+                combat_system.take_damage(damage)
+                print(f"💥 Military ship hit player for {damage} damage!")
+            
+class WeatherSystem:
+    """Dynamic weather events that affect gameplay"""
+    
+    def __init__(self):
+        self.active_weather = []
+        self.last_weather_spawn = 0
+        self.weather_spawn_interval = 180  # 3 minutes between weather events
+        
+    def update(self):
+        current_time = time.time()
+        
+        # Remove expired weather
+        self.active_weather = [w for w in self.active_weather 
+                             if current_time - w.start_time < w.duration]
+        
+        # Spawn new weather events
+        if current_time - self.last_weather_spawn > self.weather_spawn_interval:
+            if random.random() < 0.3:  # 30% chance
+                self.spawn_weather_event()
+                self.last_weather_spawn = current_time
+                
+        # Update weather effects
+        self.apply_weather_effects()
+        
+    def spawn_weather_event(self):
+        """Spawn a new weather event"""
+        weather_types = [WeatherType.SOLAR_STORM, WeatherType.ASTEROID_FIELD, 
+                        WeatherType.NEBULA, WeatherType.ION_STORM]
+        
+        weather_type = random.choice(weather_types)
+        
+        # Random position in space
+        position = (
+            random.uniform(-400, 400),
+            random.uniform(-100, 100),
+            random.uniform(-400, 400)
+        )
+        
+        radius = random.uniform(50, 150)
+        intensity = random.uniform(0.3, 1.0)
+        duration = random.uniform(300, 900)  # 5-15 minutes
+        
+        weather_event = WeatherEvent(
+            weather_type=weather_type,
+            position=position,
+            radius=radius,
+            intensity=intensity,
+            duration=duration,
+            start_time=time.time()
+        )
+        
+        self.active_weather.append(weather_event)
+        
+        print(f"🌩️ {weather_type.value} spawned at {position} (radius: {radius:.0f})")
+        
+    def apply_weather_effects(self):
+        """Apply weather effects to player and ships"""
+        if scene_manager.current_state != GameState.SPACE:
+            return
+            
+        player_pos = scene_manager.space_controller.position
+        
+        for weather in self.active_weather:
+            weather_pos = Vec3(*weather.position)
+            distance = (player_pos - weather_pos).length()
+            
+            if distance < weather.radius:
+                # Player is in weather event
+                effect_strength = (1.0 - distance / weather.radius) * weather.intensity
+                self.apply_weather_effect_to_player(weather.weather_type, effect_strength)
+                
+    def apply_weather_effect_to_player(self, weather_type, strength):
+        """Apply specific weather effects to player"""
+        if weather_type == WeatherType.SOLAR_STORM:
+            # Damage electronics and reduce fuel efficiency
+            if random.random() < 0.001 * strength:  # Small chance per frame
+                ship_systems.components[ComponentType.SENSORS].take_damage(1)
+                print("⚡ Solar storm damaged sensors!")
+                
+        elif weather_type == WeatherType.ASTEROID_FIELD:
+            # Chance of hull damage
+            if random.random() < 0.0005 * strength:
+                ship_systems.components[ComponentType.HULL].take_damage(5)
+                print("☄️ Asteroid impact damaged hull!")
+                
+        elif weather_type == WeatherType.NEBULA:
+            # Reduce sensor range and speed
+            ship_systems.components[ComponentType.SENSORS].efficiency = max(0.5, 
+                ship_systems.components[ComponentType.SENSORS].efficiency - 0.001 * strength)
+                
+        elif weather_type == WeatherType.ION_STORM:
+            # Disrupt engines and electronics
+            if random.random() < 0.0008 * strength:
+                ship_systems.components[ComponentType.ENGINE].take_damage(2)
+                print("⚡ Ion storm disrupted engines!")
+
+class FactionMilitaryManager:
+    """Manages military ships and territorial control for all factions"""
+    
+    def __init__(self):
+        self.military_ships = []
+        self.territorial_claims = {}  # faction_id -> list of planet names
+        self.active_conflicts = []  # list of (faction1, faction2, conflict_type)
+        self.blockade_zones = {}  # planet_name -> list of blockading ships
+        
+    def initialize_military_presence(self):
+        """Create initial military ships for all factions"""
+        print("🛡️ Deploying faction military forces...")
+        
+        for faction_id, faction in faction_system.factions.items():
+            if faction_id == 'independent':
+                continue  # Independents don't have organized military
+                
+            # Create patrol ships
+            for _ in range(random.randint(2, 5)):
+                position = Vec3(
+                    random.uniform(-300, 300),
+                    random.uniform(-50, 50),
+                    random.uniform(-300, 300)
+                )
+                
+                patrol_ship = MilitaryShip(faction_id, MilitaryShipType.PATROL, position)
+                self.military_ships.append(patrol_ship)
+                
+        # Establish territorial claims
+        self.establish_territorial_claims()
+        
+        # Create some initial conflicts
+        self.create_initial_conflicts()
+        
+    def establish_territorial_claims(self):
+        """Assign planets to factions based on their influence"""
+        for planet in planets:
+            # Assign planets to factions based on type and random factors
+            if planet.planet_type == "industrial":
+                claiming_faction = random.choice(['terran_federation', 'mars_republic'])
+            elif planet.planet_type == "tech":
+                claiming_faction = random.choice(['terran_federation', 'jupiter_consortium'])
+            elif planet.planet_type == "mining":
+                claiming_faction = random.choice(['mars_republic', 'jupiter_consortium'])
+            else:
+                claiming_faction = random.choice(list(faction_system.factions.keys()))
+                
+            if claiming_faction not in self.territorial_claims:
+                self.territorial_claims[claiming_faction] = []
+            self.territorial_claims[claiming_faction].append(planet.name)
+            
+            # Add faction color indicator to planet
+            planet.faction_id = claiming_faction
+            
+    def create_initial_conflicts(self):
+        """Create some conflicts between factions"""
+        potential_conflicts = [
+            ('terran_federation', 'mars_republic'),
+            ('jupiter_consortium', 'outer_rim_pirates'),
+            ('mars_republic', 'outer_rim_pirates')
+        ]
+        
+        for faction1, faction2 in potential_conflicts:
+            if random.random() < 0.4:  # 40% chance of conflict
+                self.start_conflict(faction1, faction2)
+                
+    def start_conflict(self, faction1, faction2):
+        """Start a conflict between two factions"""
+        self.active_conflicts.append((faction1, faction2, "territorial_dispute"))
+        
+        print(f"⚔️ Conflict started: {faction1} vs {faction2}")
+        
+        # Create blockades
+        self.create_blockades(faction1, faction2)
+        
+    def create_blockades(self, attacking_faction, defending_faction):
+        """Create physical blockades around enemy planets"""
+        if defending_faction in self.territorial_claims:
+            for planet_name in self.territorial_claims[defending_faction]:
+                if random.random() < 0.3:  # 30% chance to blockade each planet
+                    self.establish_blockade(attacking_faction, planet_name)
+                    
+    def establish_blockade(self, faction_id, planet_name):
+        """Establish a physical blockade around a planet"""
+        # Find the planet
+        target_planet = None
+        for planet in planets:
+            if planet.name == planet_name:
+                target_planet = planet
+                break
+                
+        if not target_planet:
+            return
+            
+        # Create blockade ships around the planet
+        blockade_ships = []
+        num_ships = random.randint(3, 6)
+        
+        for i in range(num_ships):
+            angle = (2 * 3.14159 * i) / num_ships
+            distance = target_planet.landing_radius + 30
+            
+            position = target_planet.position + Vec3(
+                distance * math.cos(angle),
+                random.uniform(-10, 10),
+                distance * math.sin(angle)
+            )
+            
+            blockade_ship = MilitaryShip(faction_id, MilitaryShipType.BLOCKADE, position)
+            blockade_ship.blockaded_planet = target_planet
+            blockade_ships.append(blockade_ship)
+            self.military_ships.append(blockade_ship)
+            
+        self.blockade_zones[planet_name] = blockade_ships
+        
+        print(f"🚫 {faction_id} established blockade around {planet_name} with {num_ships} ships")
+        
+    def update(self):
+        """Update all military operations"""
+        # Update all military ships
+        for ship in self.military_ships[:]:
+            ship.update()
+            
+        # Check for blockade effectiveness
+        self.update_blockades()
+        
+        # Evolve conflicts
+        self.update_conflicts()
+        
+    def update_blockades(self):
+        """Update blockade status and prevent access"""
+        for planet_name, blockade_ships in self.blockade_zones.items():
+            # Remove destroyed ships
+            active_ships = [ship for ship in blockade_ships if ship in self.military_ships]
+            
+            if len(active_ships) < len(blockade_ships):
+                self.blockade_zones[planet_name] = active_ships
+                
+            # If no ships left, blockade is broken
+            if not active_ships:
+                print(f"🔓 Blockade around {planet_name} has been broken!")
+                del self.blockade_zones[planet_name]
+                
+    def update_conflicts(self):
+        """Update ongoing conflicts"""
+        for conflict in self.active_conflicts[:]:
+            faction1, faction2, conflict_type = conflict
+            
+            # Random chance to escalate or resolve
+            if random.random() < 0.001:  # Very small chance per frame
+                if random.random() < 0.5:
+                    self.escalate_conflict(faction1, faction2)
+                else:
+                    self.resolve_conflict(faction1, faction2)
+                    
+    def escalate_conflict(self, faction1, faction2):
+        """Escalate conflict by deploying more military"""
+        print(f"🔥 Conflict escalating: {faction1} vs {faction2}")
+        
+        # Deploy additional military ships
+        for faction_id in [faction1, faction2]:
+            position = Vec3(
+                random.uniform(-200, 200),
+                random.uniform(-50, 50),
+                random.uniform(-200, 200)
+            )
+            
+            assault_ship = MilitaryShip(faction_id, MilitaryShipType.ASSAULT, position)
+            self.military_ships.append(assault_ship)
+            
+    def resolve_conflict(self, faction1, faction2):
+        """Resolve conflict and remove blockades"""
+        print(f"🕊️ Peace treaty signed: {faction1} and {faction2}")
+        
+        # Remove this conflict
+        self.active_conflicts = [(f1, f2, t) for f1, f2, t in self.active_conflicts 
+                               if not ((f1 == faction1 and f2 == faction2) or 
+                                      (f1 == faction2 and f2 == faction1))]
+        
+        # Remove blockades between these factions
+        to_remove = []
+        for planet_name, blockade_ships in self.blockade_zones.items():
+            if blockade_ships and blockade_ships[0].faction_id in [faction1, faction2]:
+                # Check if blockading the other faction's planet
+                for planet in planets:
+                    if (planet.name == planet_name and 
+                        hasattr(planet, 'faction_id') and 
+                        planet.faction_id in [faction1, faction2]):
+                        to_remove.append(planet_name)
+                        break
+                        
+        for planet_name in to_remove:
+            for ship in self.blockade_zones[planet_name]:
+                if ship in self.military_ships:
+                    self.military_ships.remove(ship)
+                    destroy(ship)
+            del self.blockade_zones[planet_name]
+            
+    def is_planet_blockaded(self, planet_name):
+        """Check if a planet is currently blockaded"""
+        return planet_name in self.blockade_zones and len(self.blockade_zones[planet_name]) > 0
+        
+    def can_player_access_planet(self, planet_name):
+        """Check if player can access a planet (not blockaded by hostile factions)"""
+        if not self.is_planet_blockaded(planet_name):
             return True
-        return False
+            
+        # Check if blockading faction is hostile to player
+        blockade_ships = self.blockade_zones[planet_name]
+        if blockade_ships:
+            blockading_faction = blockade_ships[0].faction_id
+            player_rep = faction_system.player_reputation.get(blockading_faction, 0)
+            return player_rep > -30  # Can access if not too hostile
+            
+        return True
+
+# ===== ADVANCED MISSION & CONTRACT SYSTEM =====
+
+class MissionType(Enum):
+    CARGO_DELIVERY = "CARGO_DELIVERY"
+    PASSENGER_TRANSPORT = "PASSENGER_TRANSPORT"
+    EXPLORATION = "EXPLORATION"
+    MILITARY_ESCORT = "MILITARY_ESCORT"
+    MINING_OPERATION = "MINING_OPERATION"
+    RESEARCH = "RESEARCH"
+    DIPLOMACY = "DIPLOMACY"
+    ASSASSINATION = "ASSASSINATION"
+    RESCUE = "RESCUE"
+    BLOCKADE_RUNNING = "BLOCKADE_RUNNING"
+
+class ContractStatus(Enum):
+    AVAILABLE = "AVAILABLE"
+    ACCEPTED = "ACCEPTED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+
+@dataclass
+class Contract:
+    contract_id: str
+    mission_type: MissionType
+    client_faction: str
+    title: str
+    description: str
+    objectives: list
+    rewards: dict  # credits, reputation, items
+    penalties: dict  # reputation loss, credits lost
+    time_limit: float  # seconds
+    difficulty: int  # 1-5
+    requirements: dict  # crew skills, ship components, reputation
+    status: ContractStatus
+    start_time: float
+    completion_time: float = None
+    
+class DynamicContractSystem:
+    """Generates contracts based on current galaxy state"""
+    
+    def __init__(self):
+        self.available_contracts = []
+        self.active_contracts = []
+        self.completed_contracts = []
+        self.last_generation = 0
+        self.generation_interval = 120  # 2 minutes
+        
+    def update(self):
+        current_time = time.time()
+        
+        # Generate new contracts periodically
+        if current_time - self.last_generation > self.generation_interval:
+            self.generate_contracts()
+            self.last_generation = current_time
+            
+        # Update active contracts
+        self.update_active_contracts()
+        
+        # Remove expired contracts
+        self.remove_expired_contracts()
+        
+    def generate_contracts(self):
+        """Generate contracts based on current galaxy state"""
+        # Generate blockade running missions if blockades exist
+        for planet_name in military_manager.blockade_zones:
+            if random.random() < 0.7:  # 70% chance
+                self.generate_blockade_running_contract(planet_name)
+                
+        # Generate escort missions for valuable cargo
+        if unified_transport_system.cargo_ships:
+            if random.random() < 0.3:  # 30% chance
+                self.generate_escort_contract()
+                
+        # Generate exploration contracts for unexplored regions
+        if random.random() < 0.2:  # 20% chance
+            self.generate_exploration_contract()
+            
+        # Generate diplomatic missions based on faction relations
+        if military_manager.active_conflicts:
+            if random.random() < 0.4:  # 40% chance
+                self.generate_diplomatic_contract()
+                
+        # Generate supply missions based on planet needs
+        for planet_name, economy in enhanced_planet_economies.items():
+            critical_needs = [commodity for commodity, days in economy.calculate_needs().items() 
+                            if days < 5]  # Critical shortage
+            if critical_needs and random.random() < 0.5:
+                self.generate_supply_contract(planet_name, critical_needs)
+                
+    def generate_blockade_running_contract(self, planet_name):
+        """Generate contract to break through blockade"""
+        blockade_ships = military_manager.blockade_zones[planet_name]
+        blockading_faction = blockade_ships[0].faction_id if blockade_ships else "unknown"
+        
+        # Find faction that owns the planet
+        planet_faction = None
+        for planet in planets:
+            if planet.name == planet_name and hasattr(planet, 'faction_id'):
+                planet_faction = planet.faction_id
+                break
+                
+        if not planet_faction:
+            return
+            
+        contract = Contract(
+            contract_id=f"blockade_{planet_name}_{int(time.time())}",
+            mission_type=MissionType.BLOCKADE_RUNNING,
+            client_faction=planet_faction,
+            title=f"Break Blockade of {planet_name}",
+            description=f"The {blockading_faction} has blockaded {planet_name}. "
+                       f"We need supplies delivered urgently. High risk, high reward.",
+            objectives=[
+                f"Deliver critical supplies to {planet_name}",
+                f"Avoid or defeat {len(blockade_ships)} blockade ships",
+                "Return safely"
+            ],
+            rewards={
+                'credits': 50000 + len(blockade_ships) * 10000,
+                'reputation': {planet_faction: 25, blockading_faction: -15}
+            },
+            penalties={
+                'reputation': {planet_faction: -10}
+            },
+            time_limit=3600,  # 1 hour
+            difficulty=4,
+            requirements={
+                'min_reputation': {planet_faction: -20},
+                'ship_components': ['SHIELDS', 'WEAPONS']
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New blockade running contract: {contract.title}")
+        
+    def generate_escort_contract(self):
+        """Generate contract to escort valuable cargo"""
+        cargo_ship = random.choice(unified_transport_system.cargo_ships)
+        if not hasattr(cargo_ship, 'cargo_manifest'):
+            return
+            
+        cargo_value = sum(cargo_ship.cargo_manifest.values()) * 1000  # Estimate value
+        
+        contract = Contract(
+            contract_id=f"escort_{cargo_ship.ship_id}_{int(time.time())}",
+            mission_type=MissionType.MILITARY_ESCORT,
+            client_faction='merchant_guild',
+            title=f"Escort Cargo Ship {cargo_ship.ship_id}",
+            description=f"Escort valuable cargo ship from {cargo_ship.origin_planet} "
+                       f"to {cargo_ship.destination_planet}. Pirates are active in the area.",
+            objectives=[
+                f"Escort cargo ship {cargo_ship.ship_id}",
+                "Defend against pirate attacks",
+                "Ensure safe delivery"
+            ],
+            rewards={
+                'credits': int(cargo_value * 0.1),  # 10% of cargo value
+                'reputation': {'merchant_guild': 10}
+            },
+            penalties={
+                'reputation': {'merchant_guild': -20}
+            },
+            time_limit=1800,  # 30 minutes
+            difficulty=3,
+            requirements={
+                'ship_components': ['WEAPONS', 'SHIELDS']
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New escort contract: {contract.title}")
+        
+    def generate_exploration_contract(self):
+        """Generate exploration contract for unknown regions"""
+        # Pick random coordinates far from planets
+        target_pos = Vec3(
+            random.uniform(-500, 500),
+            random.uniform(-200, 200),
+            random.uniform(-500, 500)
+        )
+        
+        # Make sure it's far from existing planets
+        min_distance = min((target_pos - planet.position).length() for planet in planets)
+        if min_distance < 100:
+            return  # Too close to existing planets
+            
+        contract = Contract(
+            contract_id=f"explore_{int(time.time())}",
+            mission_type=MissionType.EXPLORATION,
+            client_faction='terran_federation',
+            title="Deep Space Exploration",
+            description=f"Explore coordinates ({target_pos.x:.0f}, {target_pos.y:.0f}, {target_pos.z:.0f}) "
+                       f"and report any findings. Unknown dangers may be present.",
+            objectives=[
+                f"Travel to coordinates ({target_pos.x:.0f}, {target_pos.y:.0f}, {target_pos.z:.0f})",
+                "Scan the area for 60 seconds",
+                "Return with exploration data"
+            ],
+            rewards={
+                'credits': 25000,
+                'reputation': {'terran_federation': 15}
+            },
+            penalties={
+                'reputation': {'terran_federation': -5}
+            },
+            time_limit=2400,  # 40 minutes
+            difficulty=2,
+            requirements={
+                'ship_components': ['SENSORS', 'FUEL_TANK']
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New exploration contract: {contract.title}")
+        
+    def generate_diplomatic_contract(self):
+        """Generate diplomatic mission to resolve conflicts"""
+        if not military_manager.active_conflicts:
+            return
+            
+        faction1, faction2, conflict_type = random.choice(military_manager.active_conflicts)
+        
+        contract = Contract(
+            contract_id=f"diplomacy_{faction1}_{faction2}_{int(time.time())}",
+            mission_type=MissionType.DIPLOMACY,
+            client_faction='independent',
+            title=f"Peace Negotiations: {faction1} vs {faction2}",
+            description=f"Mediate peace talks between {faction1} and {faction2}. "
+                       f"Both sides must agree to ceasefire terms.",
+            objectives=[
+                f"Meet with {faction1} representatives",
+                f"Meet with {faction2} representatives",
+                "Negotiate ceasefire agreement",
+                "Ensure both sides sign treaty"
+            ],
+            rewards={
+                'credits': 75000,
+                'reputation': {faction1: 20, faction2: 20, 'independent': 30}
+            },
+            penalties={
+                'reputation': {faction1: -10, faction2: -10}
+            },
+            time_limit=7200,  # 2 hours
+            difficulty=5,
+            requirements={
+                'min_reputation': {faction1: 0, faction2: 0},
+                'crew_skills': {'leadership': 3}
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New diplomatic contract: {contract.title}")
+        
+    def generate_supply_contract(self, planet_name, critical_commodities):
+        """Generate urgent supply delivery contract"""
+        commodity = random.choice(critical_commodities)
+        quantity = random.randint(50, 200)
+        
+        # Find a planet that has this commodity
+        supplier_planet = None
+        for other_planet, economy in enhanced_planet_economies.items():
+            if (other_planet != planet_name and 
+                economy.stockpiles.get(commodity, 0) > quantity):
+                supplier_planet = other_planet
+                break
+                
+        if not supplier_planet:
+            return
+            
+        contract = Contract(
+            contract_id=f"supply_{planet_name}_{commodity}_{int(time.time())}",
+            mission_type=MissionType.CARGO_DELIVERY,
+            client_faction='merchant_guild',
+            title=f"Emergency Supply Run: {commodity} to {planet_name}",
+            description=f"{planet_name} has a critical shortage of {commodity}. "
+                       f"Pick up {quantity} units from {supplier_planet} and deliver urgently.",
+            objectives=[
+                f"Travel to {supplier_planet}",
+                f"Purchase {quantity} units of {commodity}",
+                f"Deliver to {planet_name} within time limit"
+            ],
+            rewards={
+                'credits': quantity * 100,  # Good price per unit
+                'reputation': {'merchant_guild': 10}
+            },
+            penalties={
+                'reputation': {'merchant_guild': -15}
+            },
+            time_limit=1800,  # 30 minutes
+            difficulty=2,
+            requirements={
+                'cargo_capacity': quantity
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New supply contract: {contract.title}")
+        
+    def update_active_contracts(self):
+        """Update progress on active contracts"""
+        current_time = time.time()
+        
+        for contract in self.active_contracts[:]:
+            # Check for time limit expiration
+            if current_time - contract.start_time > contract.time_limit:
+                self.fail_contract(contract, "Time limit exceeded")
+                continue
+                
+            # Check for objective completion (simplified)
+            if contract.mission_type == MissionType.EXPLORATION:
+                self.check_exploration_progress(contract)
+            elif contract.mission_type == MissionType.BLOCKADE_RUNNING:
+                self.check_blockade_running_progress(contract)
+                
+    def check_exploration_progress(self, contract):
+        """Check if player has reached exploration target"""
+        # Extract target coordinates from objectives
+        if scene_manager.current_state != GameState.SPACE:
+            return
+            
+        # This is simplified - in a real implementation, you'd parse the coordinates
+        # and check if player is within range for the required time
+        pass
+        
+    def check_blockade_running_progress(self, contract):
+        """Check progress on blockade running mission"""
+        # Check if player has successfully delivered to blockaded planet
+        pass
+        
+    def remove_expired_contracts(self):
+        """Remove expired available contracts"""
+        current_time = time.time()
+        self.available_contracts = [
+            contract for contract in self.available_contracts
+            if current_time - contract.start_time < contract.time_limit
+        ]
+        
+    def accept_contract(self, contract_id):
+        """Player accepts a contract"""
+        contract = next((c for c in self.available_contracts if c.contract_id == contract_id), None)
+        if not contract:
+            return False
+            
+        # Check requirements
+        if not self.check_requirements(contract):
+            print(f"❌ Requirements not met for {contract.title}")
+            return False
+            
+        # Move to active contracts
+        self.available_contracts.remove(contract)
+        contract.status = ContractStatus.ACCEPTED
+        self.active_contracts.append(contract)
+        
+        print(f"✅ Accepted contract: {contract.title}")
+        return True
+        
+    def check_requirements(self, contract):
+        """Check if player meets contract requirements"""
+        # Check reputation requirements
+        if 'min_reputation' in contract.requirements:
+            for faction_id, min_rep in contract.requirements['min_reputation'].items():
+                player_rep = faction_system.player_reputation.get(faction_id, 0)
+                if player_rep < min_rep:
+                    return False
+                    
+        # Check ship component requirements
+        if 'ship_components' in contract.requirements:
+            for component_name in contract.requirements['ship_components']:
+                component_type = getattr(ComponentType, component_name, None)
+                if component_type and component_type in ship_systems.components:
+                    component = ship_systems.components[component_type]
+                    if component.condition == ComponentCondition.DESTROYED:
+                        return False
+                        
+        # Check cargo capacity
+        if 'cargo_capacity' in contract.requirements:
+            if player_cargo.get_free_capacity() < contract.requirements['cargo_capacity']:
+                return False
+                
+        # Check crew skills
+        if 'crew_skills' in contract.requirements:
+            for skill, min_level in contract.requirements['crew_skills'].items():
+                crew_skill = ship_systems.get_crew_effectiveness(skill)
+                if crew_skill < min_level:
+                    return False
+                    
+        return True
+        
+    def complete_contract(self, contract_id):
+        """Complete a contract and award rewards"""
+        contract = next((c for c in self.active_contracts if c.contract_id == contract_id), None)
+        if not contract:
+            return False
+            
+        # Award rewards
+        if 'credits' in contract.rewards:
+            player_wallet.earn(contract.rewards['credits'])
+            print(f"💰 Earned {contract.rewards['credits']} credits")
+            
+        if 'reputation' in contract.rewards:
+            for faction_id, rep_change in contract.rewards['reputation'].items():
+                faction_system.change_reputation(faction_id, rep_change)
+                print(f"🤝 Reputation with {faction_id}: {rep_change:+d}")
+                
+        # Move to completed contracts
+        self.active_contracts.remove(contract)
+        contract.status = ContractStatus.COMPLETED
+        contract.completion_time = time.time()
+        self.completed_contracts.append(contract)
+        
+        print(f"🎉 Contract completed: {contract.title}")
+        return True
+        
+    def fail_contract(self, contract, reason="Unknown"):
+        """Fail a contract and apply penalties"""
+        print(f"❌ Contract failed: {contract.title} ({reason})")
+        
+        # Apply penalties
+        if 'reputation' in contract.penalties:
+            for faction_id, rep_loss in contract.penalties['reputation'].items():
+                faction_system.change_reputation(faction_id, rep_loss)
+                print(f"💔 Reputation with {faction_id}: {rep_loss:+d}")
+                
+        # Move to completed contracts (as failed)
+        if contract in self.active_contracts:
+            self.active_contracts.remove(contract)
+        elif contract in self.available_contracts:
+            self.available_contracts.remove(contract)
+            
+        contract.status = ContractStatus.FAILED
+        self.completed_contracts.append(contract)
+
+# Create global systems
+weather_system = WeatherSystem()
+military_manager = FactionMilitaryManager()
+dynamic_contracts = DynamicContractSystem()
+
+# ===== TRANSPORT SYSTEM ENUMS AND DATA STRUCTURES =====
+
+class MessageType(Enum):
+    GOODS_REQUEST = "GOODS_REQUEST"
+    PAYMENT = "PAYMENT"
+
+class UrgencyLevel(Enum):
+    LOW = "LOW"
+    NORMAL = "NORMAL" 
+    URGENT = "URGENT"
+    CRITICAL = "CRITICAL"
+
+class ContrabandType(Enum):
+    STOLEN_GOODS = "STOLEN_GOODS"
+    WEAPONS = "WEAPONS" 
+    ILLEGAL_TECH = "ILLEGAL_TECH"
+    NARCOTICS = "NARCOTICS"
+    SLAVES = "SLAVES"
+
+@dataclass
+class GoodsRequest:
+    commodity: str
+    quantity: int
+    max_price: float
+    urgency: UrgencyLevel
+    requesting_planet: str
+
+@dataclass
+class CargoIntelligence:
+    ship_id: str
+    origin_planet: str
+    destination_planet: str
+    cargo_manifest: dict
+    estimated_value: float
+    escort_level: str
+    route_danger: float
+    intel_timestamp: float
 
 # Global systems
 market_system = MarketSystem()
 player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
 player_wallet = PlayerWallet(starting_credits=500)
-ship_upgrades = ShipUpgrades()
+ship_systems = RealisticShipSystems()
 
 # Create a rotating skybox instead of stars
 class RotatingSkybox(Entity):
@@ -470,14 +1870,18 @@ class RotatingSkybox(Entity):
         self.rotation_speed = 360 / (2 * 60 * 60)  # Approximately 0.05 degrees per second
         
         # Load all six faces of the skybox
-        self.textures = {
-            'right': load_texture('assets/textures/skybox_right.png'),
-            'left': load_texture('assets/textures/skybox_left.png'),
-            'top': load_texture('assets/textures/skybox_top.png'),
-            'bottom': load_texture('assets/textures/skybox_bottom.png'),
-            'front': load_texture('assets/textures/skybox_front.png'),
-            'back': load_texture('assets/textures/skybox_back.png')
-        }
+        try:
+            self.textures = {
+                'right': load_texture('assets/textures/skybox_right.png'),
+                'left': load_texture('assets/textures/skybox_left.png'),
+                'top': load_texture('assets/textures/skybox_top.png'),
+                'bottom': load_texture('assets/textures/skybox_bottom.png'),
+                'front': load_texture('assets/textures/skybox_front.png'),
+                'back': load_texture('assets/textures/skybox_back.png')
+            }
+        except:
+            # Fallback if textures not found
+            self.textures = {'right': 'white_cube'}
         
         # Apply textures to the skybox
         self.texture = self.textures['right']
@@ -651,6 +2055,57 @@ class SpaceController(Entity):
             scale=0.8,
             color=color.white
         )
+        
+        # Transport system status display
+        self.transport_text = Text(
+            parent=camera.ui,
+            text='🚢 Ships: 0',
+            position=(-0.45, 0.15),
+            scale=0.6,
+            color=color.cyan
+        )
+        
+        # Fuel and ship status display
+        self.fuel_text = Text(
+            parent=camera.ui,
+            text='⛽ Fuel: 100%',
+            position=(-0.45, 0.1),
+            scale=0.6,
+            color=color.orange
+        )
+        
+        self.ship_status_text = Text(
+            parent=camera.ui,
+            text='🔧 All Systems: GOOD',
+            position=(-0.45, 0.05),
+            scale=0.6,
+            color=color.green
+        )
+        
+        # Weather and conflict status display
+        self.weather_text = Text(
+            parent=camera.ui,
+            text='🌤️ Weather: Clear',
+            position=(-0.45, 0.0),
+            scale=0.6,
+            color=color.white
+        )
+        
+        self.conflict_text = Text(
+            parent=camera.ui,
+            text='⚔️ Conflicts: 0',
+            position=(-0.45, -0.05),
+            scale=0.6,
+            color=color.orange
+        )
+        
+        self.contracts_text = Text(
+            parent=camera.ui,
+            text='📋 Contracts: 0 available',
+            position=(-0.45, -0.1),
+            scale=0.6,
+            color=color.cyan
+        )
 
     def update(self):
         if not paused:
@@ -715,6 +2170,72 @@ class SpaceController(Entity):
             
             # Update time display
             self.time_text.text = f'Day {time_system.game_day}'
+            
+            # Update transport status display
+            stats = unified_transport_system.get_statistics()
+            self.transport_text.text = f"🚢 Ships: {stats['total_ships']} | 🚛 Cargo: {stats['cargo_ships']} | 🏴‍☠️ Raiders: {stats['raiders']} | ⚠️ Threat: {stats['pirate_threat_level']}"
+            
+            # Update ship systems
+            ship_systems.update(self.position)
+            
+            # Update speed based on ship performance
+            engine_performance = ship_systems.get_engine_performance()
+            if engine_performance <= 0:
+                # No fuel or engine destroyed
+                self.speed = 0
+                self.max_speed = 0
+            else:
+                base_speed = 5
+                self.speed = base_speed * engine_performance
+                self.max_speed = int(ship_systems.get_max_speed())
+                
+            # Update cargo capacity
+            player_cargo.max_capacity = ship_systems.get_cargo_capacity()
+            
+            # Update fuel display
+            fuel_percentage = ship_systems.fuel_system.get_fuel_percentage()
+            self.fuel_text.text = f"⛽ Fuel: {fuel_percentage:.1f}%"
+            if fuel_percentage < 20:
+                self.fuel_text.color = color.red
+            elif fuel_percentage < 50:
+                self.fuel_text.color = color.yellow
+            else:
+                self.fuel_text.color = color.orange
+                
+            # Update ship status display
+            system_status = ship_systems.get_system_status()
+            if system_status['damaged_components']:
+                damaged_count = len(system_status['damaged_components'])
+                self.ship_status_text.text = f"🔧 {damaged_count} Systems Damaged"
+                self.ship_status_text.color = color.red
+            else:
+                self.ship_status_text.text = "🔧 All Systems: GOOD"
+                self.ship_status_text.color = color.green
+                
+            # Update weather status
+            if weather_system.active_weather:
+                nearest_weather = min(weather_system.active_weather, 
+                                    key=lambda w: (self.position - Vec3(*w.position)).length())
+                distance = (self.position - Vec3(*nearest_weather.position)).length()
+                if distance < nearest_weather.radius:
+                    self.weather_text.text = f"🌩️ {nearest_weather.weather_type.value}"
+                    self.weather_text.color = color.red
+                else:
+                    self.weather_text.text = f"🌤️ Weather: Clear"
+                    self.weather_text.color = color.white
+            else:
+                self.weather_text.text = f"🌤️ Weather: Clear"
+                self.weather_text.color = color.white
+                
+            # Update conflict status
+            active_conflicts = len(military_manager.active_conflicts)
+            total_blockades = len(military_manager.blockade_zones)
+            self.conflict_text.text = f"⚔️ Conflicts: {active_conflicts} | 🚫 Blockades: {total_blockades}"
+            
+            # Update contracts status
+            available_contracts = len(dynamic_contracts.available_contracts)
+            active_contracts = len(dynamic_contracts.active_contracts)
+            self.contracts_text.text = f"📋 Contracts: {available_contracts} available | {active_contracts} active"
 
 # Player setup with proper 3D movement
 player = SpaceController()
@@ -1070,6 +2591,9 @@ class SceneManager:
             self.space_controller.health_text.enabled = False
             self.space_controller.crew_text.enabled = False
             self.space_controller.time_text.enabled = False
+            self.space_controller.transport_text.enabled = False
+            self.space_controller.fuel_text.enabled = False
+            self.space_controller.ship_status_text.enabled = False
             
             # Hide space entities
             for entity in self.space_entities:
@@ -1110,6 +2634,9 @@ class SceneManager:
             self.space_controller.health_text.enabled = True
             self.space_controller.crew_text.enabled = True
             self.space_controller.time_text.enabled = True
+            self.space_controller.transport_text.enabled = True
+            self.space_controller.fuel_text.enabled = True
+            self.space_controller.ship_status_text.enabled = True
             camera.parent = self.space_controller
             camera.rotation = (0, 0, 0)
             camera.position = (0, 0, -15) if self.space_controller.third_person else (0, 0, 0)
@@ -1227,7 +2754,14 @@ class Planet(Entity):
         # Add name for the planet
         self.name = f"{planet_data['name_prefix']}-{random.randint(100, 999)}"
         
-        # Generate market for this planet
+        # Initialize enhanced economy
+        self.enhanced_economy = None  # Will be initialized later
+        
+        # Fuel station availability (some planets have fuel)
+        self.has_fuel_station = random.random() < 0.7  # 70% of planets have fuel
+        self.fuel_price = random.randint(5, 15)  # Credits per fuel unit
+        
+        # Generate market for this planet (keep for compatibility)
         market_system.generate_market_for_planet(self.name, self.planet_type)
     
     def update(self):
@@ -1291,6 +2825,347 @@ cancel_button = Button(
 
 # Variable to track the planet we're near
 nearby_planet = None
+
+# ===== TRANSPORT SHIP CLASSES =====
+
+class TransportShip(Entity):
+    """Base class for all transport ships"""
+    
+    def __init__(self, origin_planet, destination_planet, ship_type, **kwargs):
+        # Get position from planet objects
+        if hasattr(origin_planet, 'position'):
+            start_pos = origin_planet.position + Vec3(random.uniform(-10, 10), random.uniform(-5, 5), random.uniform(-10, 10))
+        else:
+            start_pos = Vec3(0, 0, 0)
+            
+        super().__init__(
+            model='cube',
+            position=start_pos,
+            **kwargs
+        )
+        
+        self.origin = origin_planet
+        self.destination = destination_planet
+        self.ship_type = ship_type
+        self.delivered = False
+        self.encounter_triggered = False
+        
+    def update(self):
+        if self.delivered:
+            return
+            
+        # Move toward destination
+        if hasattr(self.destination, 'position'):
+            direction = (self.destination.position - self.position).normalized()
+            speed = getattr(self, 'speed', 10.0)
+            self.position += direction * speed * time.dt
+            
+            # Check if arrived
+            if (self.position - self.destination.position).length() < 5:
+                self.on_arrival()
+                
+        # Check for player encounters
+        self.check_player_encounter()
+                
+    def check_player_encounter(self):
+        """Check if player is near this ship"""
+        if hasattr(scene_manager, 'space_controller') and scene_manager.space_controller:
+            player_pos = scene_manager.space_controller.position
+            distance = (self.position - player_pos).length()
+            
+            if distance < 30 and not self.encounter_triggered:
+                self.trigger_player_encounter()
+                
+    def trigger_player_encounter(self):
+        """Trigger encounter with player"""
+        self.encounter_triggered = True
+        encounter_text = f"\n🚢 SHIP ENCOUNTER!\n"
+        encounter_text += f"Ship Type: {self.ship_type}\n"
+        encounter_text += f"Origin: {getattr(self.origin, 'name', 'Unknown')}\n"
+        encounter_text += f"Destination: {getattr(self.destination, 'name', 'Unknown')}\n"
+        
+        if hasattr(self, 'cargo'):
+            encounter_text += f"Cargo: {self.get_cargo_description()}\n"
+        if hasattr(self, 'contract_value'):
+            encounter_text += f"Value: {self.contract_value} credits\n"
+            
+        print(encounter_text)
+        
+    def on_arrival(self):
+        """Override in subclasses"""
+        self.delivered = True
+        destroy(self)
+
+class MessageShip(TransportShip):
+    """Ship carrying messages between planets"""
+    
+    def __init__(self, origin_planet, destination_planet, message_type, payload):
+        super().__init__(
+            origin_planet, 
+            destination_planet, 
+            "MESSAGE",
+            color=color.cyan,
+            scale=(0.5, 0.2, 0.8)
+        )
+        
+        self.message_type = message_type
+        self.payload = payload
+        self.speed = 15.0
+        
+        print(f"📨 Message ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
+        
+    def on_arrival(self):
+        """Deliver message to destination"""
+        if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
+            self.destination.enhanced_economy.receive_message(self.message_type, self.payload)
+            
+        print(f"📬 Message delivered to {getattr(self.destination, 'name', 'Unknown')}")
+        super().on_arrival()
+
+class CargoShip(TransportShip):
+    """Ship carrying cargo between planets"""
+    
+    def __init__(self, origin_planet, destination_planet, cargo_manifest):
+        super().__init__(
+            origin_planet,
+            destination_planet, 
+            "CARGO",
+            color=color.orange,
+            scale=(1.2, 0.6, 2.0)
+        )
+        
+        self.cargo = cargo_manifest.copy()
+        self.speed = 8.0
+        self.contract_value = self.calculate_cargo_value()
+        self.shields = random.randint(20, 40)
+        
+        print(f"🚛 Cargo ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
+        print(f"   Cargo: {self.get_cargo_description()}")
+        
+    def calculate_cargo_value(self):
+        """Calculate total value of cargo"""
+        base_prices = {
+            "food": 10, "minerals": 25, "technology": 50,
+            "luxury_goods": 75, "medicine": 40, "weapons": 60,
+            "fuel": 15, "spices": 35
+        }
+        
+        total_value = 0
+        for commodity, quantity in self.cargo.items():
+            base_price = base_prices.get(commodity, 20)
+            total_value += base_price * quantity
+            
+        return int(total_value)
+    
+    def get_cargo_description(self):
+        """Human readable cargo description"""
+        if not self.cargo:
+            return "Empty"
+        items = []
+        for commodity, quantity in self.cargo.items():
+            items.append(f"{quantity} {commodity.replace('_', ' ')}")
+        return ", ".join(items)
+    
+    def on_arrival(self):
+        """Deliver cargo and spawn payment ship"""
+        # Add cargo to destination
+        if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
+            for commodity, quantity in self.cargo.items():
+                current = self.destination.enhanced_economy.stockpiles.get(commodity, 0)
+                self.destination.enhanced_economy.stockpiles[commodity] = current + quantity
+                
+        print(f"✅ Cargo delivered to {getattr(self.destination, 'name', 'Unknown')}: {self.get_cargo_description()}")
+        
+        # Spawn payment ship
+        if hasattr(self, 'contract_value') and self.contract_value > 0:
+            payment_ship = PaymentShip(self.destination, self.origin, self.contract_value)
+            if 'unified_transport_system' in globals():
+                unified_transport_system.payment_ships.append(payment_ship)
+        
+        super().on_arrival()
+
+class PaymentShip(TransportShip):
+    """Ship carrying payment/credits"""
+    
+    def __init__(self, origin_planet, destination_planet, credits):
+        super().__init__(
+            origin_planet,
+            destination_planet,
+            "PAYMENT", 
+            color=color.yellow,
+            scale=(0.8, 0.4, 1.0)
+        )
+        
+        self.credits = credits
+        self.speed = 12.0
+        
+        print(f"💰 Payment ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')} ({credits} credits)")
+        
+    def on_arrival(self):
+        """Deliver payment"""
+        if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
+            self.destination.enhanced_economy.credits += self.credits
+            
+        print(f"💳 Payment delivered to {getattr(self.destination, 'name', 'Unknown')}: {self.credits} credits")
+        super().on_arrival()
+
+class PirateRaider(TransportShip):
+    """Pirate ship that hunts cargo ships based on intelligence"""
+    
+    def __init__(self, pirate_base, target_intelligence=None):
+        super().__init__(
+            pirate_base,
+            None,  # No fixed destination - hunting mode
+            "RAIDER",
+            color=color.dark_gray,
+            scale=(1.0, 0.5, 1.8)
+        )
+        
+        self.pirate_base = pirate_base
+        self.target_intelligence = target_intelligence
+        self.hunting_mode = True
+        self.speed = 10.0
+        self.weapons_rating = random.randint(20, 50)
+        self.crew_size = random.randint(4, 12)
+        self.cargo_stolen = {}
+        self.raid_range = 200
+        
+        if target_intelligence:
+            print(f"🏴‍☠️ Pirate raider launched from {getattr(pirate_base, 'name', 'Unknown Base')}")
+            print(f"   Target: {target_intelligence.cargo_manifest} worth {target_intelligence.estimated_value} credits")
+        else:
+            print(f"🏴‍☠️ Pirate patrol launched from {getattr(pirate_base, 'name', 'Unknown Base')}")
+            
+    def update(self):
+        """Hunt for cargo ships or return to base"""
+        if self.delivered:
+            return
+            
+        if self.hunting_mode:
+            self.hunt_cargo_ships()
+        else:
+            # Return to base with stolen goods
+            if hasattr(self.pirate_base, 'position'):
+                direction = (self.pirate_base.position - self.position).normalized()
+                self.position += direction * self.speed * time.dt
+                
+                if (self.position - self.pirate_base.position).length() < 5:
+                    self.return_to_base()
+                    
+    def hunt_cargo_ships(self):
+        """Hunt for cargo ships to raid"""
+        # Look for cargo ships in range
+        if 'unified_transport_system' in globals():
+            for cargo_ship in unified_transport_system.cargo_ships:
+                if not hasattr(cargo_ship, 'position'):
+                    continue
+                    
+                distance = (self.position - cargo_ship.position).length()
+                
+                if distance < self.raid_range and self.should_attack_cargo_ship(cargo_ship):
+                    self.attack_cargo_ship(cargo_ship)
+                    return
+                    
+        # If no targets found, patrol randomly
+        self.patrol_movement()
+        
+    def should_attack_cargo_ship(self, cargo_ship):
+        """Decide whether to attack this cargo ship"""
+        if self.target_intelligence:
+            intel = self.target_intelligence
+            if hasattr(cargo_ship, 'cargo'):
+                for commodity in intel.cargo_manifest:
+                    if commodity in cargo_ship.cargo:
+                        return True
+                        
+        if hasattr(cargo_ship, 'contract_value'):
+            return cargo_ship.contract_value > 500
+            
+        return False
+    
+    def attack_cargo_ship(self, cargo_ship):
+        """Attack and rob cargo ship"""
+        print(f"🏴‍☠️ PIRATE ATTACK!")
+        print(f"Raider attacking cargo ship: {cargo_ship.get_cargo_description()}")
+        
+        attack_strength = self.weapons_rating + (self.crew_size * 2)
+        defense_strength = getattr(cargo_ship, 'shields', 25) + random.randint(10, 30)
+        
+        success_chance = attack_strength / (attack_strength + defense_strength)
+        
+        if random.random() < success_chance:
+            # Successful raid
+            self.cargo_stolen = cargo_ship.cargo.copy()
+            stolen_value = cargo_ship.contract_value
+            
+            print(f"💀 Pirate raid successful! Stolen: {cargo_ship.get_cargo_description()}")
+            print(f"   Value: {stolen_value} credits")
+            
+            # Remove the cargo ship
+            if 'unified_transport_system' in globals() and cargo_ship in unified_transport_system.cargo_ships:
+                unified_transport_system.cargo_ships.remove(cargo_ship)
+                destroy(cargo_ship)
+                
+            # Return to base with stolen goods
+            self.hunting_mode = False
+            
+            # Share intelligence with other pirates
+            self.share_intelligence(cargo_ship)
+            
+        else:
+            print(f"⚔️ Cargo ship fought off pirate attack!")
+            self.hunting_mode = False
+            
+    def patrol_movement(self):
+        """Random patrol movement when no targets found"""
+        random_offset = Vec3(
+            random.uniform(-5, 5),
+            random.uniform(-5, 5), 
+            random.uniform(-5, 5)
+        )
+        self.position += random_offset * time.dt
+        
+    def share_intelligence(self, cargo_ship):
+        """Share intelligence about cargo routes with other pirate bases"""
+        intelligence = CargoIntelligence(
+            ship_id=f"CARGO-{time.time()}",
+            origin_planet=getattr(cargo_ship.origin, 'name', 'Unknown'),
+            destination_planet=getattr(cargo_ship.destination, 'name', 'Unknown'),
+            cargo_manifest=cargo_ship.cargo.copy(),
+            estimated_value=cargo_ship.contract_value,
+            escort_level="NONE",
+            route_danger=0.3,
+            intel_timestamp=time.time()
+        )
+        
+        # Send intelligence to other pirate bases
+        if 'planets' in globals():
+            for planet in planets:
+                if (hasattr(planet, 'enhanced_economy') and planet.enhanced_economy and 
+                    hasattr(planet.enhanced_economy, 'intelligence_cache')):
+                    if (self.position - planet.position).length() < 500:
+                        planet.enhanced_economy.receive_intelligence(intelligence)
+                
+    def return_to_base(self):
+        """Return stolen goods to pirate base"""
+        self.delivered = True
+        
+        if hasattr(self.pirate_base, 'enhanced_economy') and self.pirate_base.enhanced_economy:
+            self.pirate_base.enhanced_economy.receive_stolen_goods(self.cargo_stolen)
+            
+        print(f"🏴‍☠️ Raider returned to {getattr(self.pirate_base, 'name', 'Unknown Base')}")
+        print(f"   Delivered stolen goods: {self.get_stolen_cargo_description()}")
+        
+        destroy(self)
+        
+    def get_stolen_cargo_description(self):
+        """Get description of stolen cargo"""
+        if not self.cargo_stolen:
+            return "Nothing"
+        items = []
+        for commodity, quantity in self.cargo_stolen.items():
+            items.append(f"{quantity} {commodity.replace('_', ' ')}")
+        return ", ".join(items)
 
 # Random Events System
 class RandomEventSystem:
@@ -1786,6 +3661,496 @@ class MissionSystem:
                 )
                 self.available_missions.append(mission)
 
+# ===== ENHANCED PLANET ECONOMIES =====
+
+class EnhancedPlanetEconomy:
+    """Enhanced planet economy with realistic transport mechanics"""
+    
+    def __init__(self, planet_name, planet_type, planet_object):
+        self.planet_name = planet_name
+        self.planet_type = planet_type
+        self.planet_object = planet_object
+        
+        # Enhanced stockpile system
+        self.stockpiles = {}
+        self.daily_consumption = {}
+        self.daily_production = {}
+        self.outgoing_requests = {}
+        self.expected_deliveries = {}
+        self.credits = random.randint(10000, 50000)
+        
+        # Transport timing
+        self.last_procurement_check = 0
+        self.procurement_interval = 45  # Check every 45 seconds
+        
+        # Connect to existing market system
+        if planet_name in market_system.planet_economies:
+            old_economy = market_system.planet_economies[planet_name]
+            self.stockpiles = old_economy.stockpiles.copy()
+            self.daily_consumption = old_economy.daily_consumption.copy()
+            self.daily_production = old_economy.daily_production.copy()
+        else:
+            self.initialize_economy()
+            
+    def initialize_economy(self):
+        """Set up production/consumption based on planet type"""
+        economy_templates = {
+            "agricultural": {
+                "production": {"food": 200, "spices": 50},
+                "consumption": {"technology": 30, "minerals": 40, "luxury_goods": 20},
+                "stockpiles": {"food": 2000, "spices": 500, "technology": 100, "minerals": 200, "luxury_goods": 50}
+            },
+            "industrial": {
+                "production": {"technology": 100, "weapons": 40, "medicine": 30}, 
+                "consumption": {"food": 180, "fuel": 60, "minerals": 80},
+                "stockpiles": {"technology": 800, "weapons": 300, "medicine": 400, "food": 600, "fuel": 300, "minerals": 400}
+            },
+            "mining": {
+                "production": {"minerals": 300, "fuel": 100},
+                "consumption": {"food": 150, "technology": 50, "medicine": 25},
+                "stockpiles": {"minerals": 3000, "fuel": 800, "food": 500, "technology": 200, "medicine": 100}
+            },
+            "tech": {
+                "production": {"technology": 120, "medicine": 60, "weapons": 40},
+                "consumption": {"food": 120, "minerals": 100, "fuel": 40},
+                "stockpiles": {"technology": 1200, "medicine": 600, "weapons": 400, "food": 400, "minerals": 500, "fuel": 200}
+            },
+            "luxury": {
+                "production": {"luxury_goods": 80, "spices": 40},
+                "consumption": {"food": 100, "technology": 50, "minerals": 60},
+                "stockpiles": {"luxury_goods": 1500, "spices": 800, "food": 300, "technology": 250, "minerals": 300}
+            }
+        }
+        
+        template = economy_templates.get(self.planet_type, economy_templates["agricultural"])
+        
+        self.daily_production = template["production"].copy()
+        self.daily_consumption = template["consumption"].copy()
+        self.stockpiles = template["stockpiles"].copy()
+        
+        # Ensure all commodities exist
+        for commodity in ["food", "minerals", "technology", "luxury_goods", "medicine", "weapons", "fuel", "spices"]:
+            if commodity not in self.stockpiles:
+                self.stockpiles[commodity] = 0
+                
+    def update(self):
+        """Update economy and handle transport needs"""
+        current_time = time.time()
+        
+        # Process production and consumption
+        for commodity, amount in self.daily_production.items():
+            per_second = amount / 300.0  # 1 game day = 5 minutes = 300 seconds
+            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0) + (per_second * time.dt)
+            
+        for commodity, amount in self.daily_consumption.items():
+            per_second = amount / 300.0
+            current_stock = self.stockpiles.get(commodity, 0)
+            consumption = min(per_second * time.dt, current_stock)
+            self.stockpiles[commodity] = current_stock - consumption
+            
+        # Check for procurement needs
+        if current_time - self.last_procurement_check > self.procurement_interval:
+            self.assess_and_send_requests()
+            self.last_procurement_check = current_time
+            
+        # Update manufacturing processes
+        crew_effectiveness = 50  # Default effectiveness if no crew system
+        enhanced_manufacturing.update_manufacturing(self.planet_name, time.dt, crew_effectiveness, self.stockpiles)
+        
+        # Auto-start manufacturing based on available materials
+        self.auto_start_manufacturing()
+            
+    def assess_and_send_requests(self):
+        """Assess needs and send procurement messages"""
+        needs = self.calculate_needs()
+        
+        for commodity, request in needs.items():
+            # Don't spam requests
+            if commodity not in self.outgoing_requests or time.time() - self.outgoing_requests[commodity] > 120:
+                self.send_procurement_message(request)
+                self.outgoing_requests[commodity] = time.time()
+                
+    def calculate_needs(self):
+        """Calculate what goods this planet needs"""
+        needs = {}
+        
+        for commodity, consumption in self.daily_consumption.items():
+            if consumption <= 0:
+                continue
+                
+            current_stock = self.stockpiles.get(commodity, 0)
+            expected = self.expected_deliveries.get(commodity, 0)
+            effective_stock = current_stock + expected
+            
+            days_remaining = effective_stock / consumption if consumption > 0 else float('inf')
+            
+            if days_remaining < 30:  # Less than 30 days supply
+                urgency = self.determine_urgency(days_remaining)
+                quantity_needed = int(consumption * 60 - effective_stock)  # Target 60 days supply
+                
+                if quantity_needed > 0:
+                    needs[commodity] = GoodsRequest(
+                        commodity=commodity,
+                        quantity=quantity_needed,
+                        max_price=self.calculate_max_price(commodity, urgency),
+                        urgency=urgency,
+                        requesting_planet=self.planet_name
+                    )
+                    
+        return needs
+    
+    def determine_urgency(self, days_remaining):
+        """Determine urgency based on remaining supply"""
+        if days_remaining < 7:
+            return UrgencyLevel.CRITICAL
+        elif days_remaining < 15:
+            return UrgencyLevel.URGENT
+        elif days_remaining < 25:
+            return UrgencyLevel.NORMAL
+        else:
+            return UrgencyLevel.LOW
+            
+    def calculate_max_price(self, commodity, urgency):
+        """Calculate max price willing to pay"""
+        base_prices = {
+            "food": 10, "minerals": 25, "technology": 50,
+            "luxury_goods": 75, "medicine": 40, "weapons": 60,
+            "fuel": 15, "spices": 35
+        }
+        
+        base_price = base_prices.get(commodity, 20)
+        urgency_multipliers = {
+            UrgencyLevel.LOW: 1.0,
+            UrgencyLevel.NORMAL: 1.2,
+            UrgencyLevel.URGENT: 1.5,
+            UrgencyLevel.CRITICAL: 2.0
+        }
+        
+        return base_price * urgency_multipliers[urgency]
+    
+    def send_procurement_message(self, request):
+        """Send procurement message to suppliers"""
+        suppliers = self.find_suppliers(request.commodity)
+        
+        for supplier_planet in suppliers:
+            if supplier_planet.name != self.planet_name:
+                message_ship = MessageShip(
+                    self.planet_object,
+                    supplier_planet,
+                    MessageType.GOODS_REQUEST,
+                    request
+                )
+                unified_transport_system.message_ships.append(message_ship)
+                
+    def find_suppliers(self, commodity):
+        """Find planets that produce this commodity"""
+        suppliers = []
+        
+        for planet in planets:
+            if hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
+                production = planet.enhanced_economy.daily_production.get(commodity, 0)
+                consumption = planet.enhanced_economy.daily_consumption.get(commodity, 0)
+                if production > consumption:  # Has surplus
+                    suppliers.append(planet)
+                    
+        return suppliers
+    
+    def receive_message(self, message_type, payload):
+        """Process incoming message"""
+        if message_type == MessageType.GOODS_REQUEST:
+            self.handle_goods_request(payload)
+            
+    def handle_goods_request(self, request):
+        """Evaluate and respond to goods request"""
+        commodity = request.commodity
+        quantity = request.quantity
+        
+        # Check if we can supply
+        production = self.daily_production.get(commodity, 0)
+        consumption = self.daily_consumption.get(commodity, 0)
+        current_stock = self.stockpiles.get(commodity, 0)
+        
+        surplus = production - consumption
+        available_stock = max(0, current_stock - (consumption * 30))  # Keep 30 days reserve
+        
+        can_supply = min(quantity, available_stock)
+        
+        if can_supply > 0 and surplus > 0:
+            # Find requesting planet
+            requesting_planet = None
+            for planet in planets:
+                if planet.name == request.requesting_planet:
+                    requesting_planet = planet
+                    break
+                    
+            if requesting_planet:
+                # Create cargo ship
+                cargo_manifest = {commodity: can_supply}
+                cargo_ship = CargoShip(
+                    self.planet_object,
+                    requesting_planet,
+                    cargo_manifest
+                )
+                unified_transport_system.cargo_ships.append(cargo_ship)
+                
+                # Remove goods from stockpile
+                self.stockpiles[commodity] -= can_supply
+                
+                # Track expected delivery
+                current_expected = requesting_planet.enhanced_economy.expected_deliveries.get(commodity, 0)
+                requesting_planet.enhanced_economy.expected_deliveries[commodity] = current_expected + can_supply
+                
+                print(f"📦 {self.planet_name} shipping {can_supply} {commodity} to {request.requesting_planet}")
+                
+    def auto_start_manufacturing(self):
+        """Automatically start manufacturing based on available materials and planet type"""
+        if self.planet_type == "industrial":
+            # Industrial planets prioritize advanced manufacturing
+            recipes_to_try = ["advanced_components", "weapons", "basic_components"]
+        elif self.planet_type == "tech":
+            # Tech planets focus on high-tech goods
+            recipes_to_try = ["medicine", "advanced_components", "technology"]
+        elif self.planet_type == "luxury":
+            # Luxury planets make luxury goods
+            recipes_to_try = ["luxury_goods", "medicine"]
+        else:
+            # Other planets focus on basic manufacturing
+            recipes_to_try = ["basic_components"]
+            
+        for recipe_name in recipes_to_try:
+            if recipe_name in enhanced_manufacturing.recipes:
+                recipe = enhanced_manufacturing.recipes[recipe_name]
+                
+                # Check if we have materials and aren't already manufacturing this
+                current_processes = enhanced_manufacturing.get_manufacturing_status(self.planet_name)
+                if recipe_name not in current_processes:
+                    # Check if we have enough materials
+                    can_manufacture = True
+                    for commodity, required in recipe.inputs.items():
+                        if self.stockpiles.get(commodity, 0) < required * 2:  # Keep some buffer
+                            can_manufacture = False
+                            break
+                            
+                    if can_manufacture:
+                        crew_effectiveness = 50  # Default
+                        enhanced_manufacturing.start_manufacturing(
+                            self.planet_name, recipe_name, self.stockpiles, crew_effectiveness
+                        )
+                        break  # Only start one process at a time
+
+class PirateBaseEconomy(EnhancedPlanetEconomy):
+    """Economy for pirate bases with contraband and raiding needs"""
+    
+    def __init__(self, base_name, planet_object):
+        super().__init__(base_name, "pirate_hideout", planet_object)
+        
+        # Pirate-specific stockpiles
+        self.contraband_stockpiles = {}
+        self.intelligence_cache = []
+        self.last_raid_launch = 0
+        self.raid_interval = 120  # Launch raiders every 2 minutes
+        
+        self.initialize_pirate_economy()
+        
+    def initialize_pirate_economy(self):
+        """Set up pirate base economy"""
+        self.daily_production = {"weapons": 20}
+        
+        self.daily_consumption = {
+            "food": 50, "fuel": 30, "weapons": 10, "medicine": 15
+        }
+        
+        self.stockpiles = {
+            "food": 200, "fuel": 150, "weapons": 100, "medicine": 50,
+            "minerals": 100, "technology": 50, "luxury_goods": 25, "spices": 30
+        }
+        
+        self.contraband_stockpiles = {
+            ContrabandType.STOLEN_GOODS: 0,
+            ContrabandType.WEAPONS: 0,
+            ContrabandType.ILLEGAL_TECH: 0,
+            ContrabandType.NARCOTICS: 0,
+            ContrabandType.SLAVES: 0
+        }
+        
+    def update(self):
+        """Update pirate base economy and raiding operations"""
+        super().update()
+        
+        current_time = time.time()
+        
+        # Launch raiders based on intelligence and needs
+        if current_time - self.last_raid_launch > self.raid_interval:
+            self.consider_launching_raiders()
+            self.last_raid_launch = current_time
+            
+    def consider_launching_raiders(self):
+        """Decide whether to launch raiders based on needs and intelligence"""
+        critical_needs = []
+        for commodity, consumption in self.daily_consumption.items():
+            current_stock = self.stockpiles.get(commodity, 0)
+            days_remaining = current_stock / consumption if consumption > 0 else float('inf')
+            
+            if days_remaining < 20:
+                critical_needs.append(commodity)
+                
+        if critical_needs or random.random() < 0.4:  # 40% chance of opportunistic raiding
+            self.launch_raider(critical_needs)
+            
+    def launch_raider(self, target_commodities=None):
+        """Launch a pirate raider"""
+        target_intel = self.select_raid_target(target_commodities)
+        
+        raider = PirateRaider(
+            pirate_base=self.planet_object,
+            target_intelligence=target_intel
+        )
+        
+        unified_transport_system.raiders.append(raider)
+        
+    def select_raid_target(self, needed_commodities=None):
+        """Select the best raid target from intelligence cache"""
+        if not self.intelligence_cache:
+            return None
+            
+        best_target = None
+        best_score = 0
+        
+        for intel in self.intelligence_cache:
+            score = intel.estimated_value
+            
+            if needed_commodities:
+                for commodity in needed_commodities:
+                    if commodity in intel.cargo_manifest:
+                        score *= 2
+                        
+            age_hours = (time.time() - intel.intel_timestamp) / 3600
+            if age_hours > 24:
+                continue
+                
+            if score > best_score:
+                best_score = score
+                best_target = intel
+                
+        return best_target
+        
+    def receive_intelligence(self, intelligence):
+        """Receive intelligence about cargo movements"""
+        # Remove old intelligence
+        self.intelligence_cache = [intel for intel in self.intelligence_cache 
+                                 if time.time() - intel.intel_timestamp < 86400]  # 24 hours
+                                 
+        self.intelligence_cache.append(intelligence)
+        print(f"🕵️ {self.planet_name} received cargo intelligence: {intelligence.cargo_manifest}")
+        
+    def receive_stolen_goods(self, stolen_cargo):
+        """Process stolen goods from successful raids"""
+        for commodity, quantity in stolen_cargo.items():
+            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0) + quantity
+            
+        print(f"🏴‍☠️ {self.planet_name} received stolen goods: {stolen_cargo}")
+
+# ===== UNIFIED TRANSPORT SYSTEM MANAGER =====
+
+class UnifiedTransportSystemManager:
+    """Manager for all transport ships and systems"""
+    
+    def __init__(self):
+        self.message_ships = []
+        self.cargo_ships = []
+        self.payment_ships = []
+        self.raiders = []
+        self.smugglers = []
+        
+    def update(self):
+        """Update all transport ships"""
+        all_ships = (self.message_ships + self.cargo_ships + self.payment_ships + 
+                    self.raiders + self.smugglers)
+        
+        for ship in all_ships[:]:  # Copy to avoid modification during iteration
+            if hasattr(ship, 'update'):
+                ship.update()
+                
+            # Remove delivered ships
+            if hasattr(ship, 'delivered') and ship.delivered:
+                self.remove_ship(ship)
+                    
+    def remove_ship(self, ship):
+        """Remove ship from appropriate list"""
+        lists_to_check = [
+            self.message_ships, self.cargo_ships, self.payment_ships,
+            self.raiders, self.smugglers
+        ]
+        
+        for ship_list in lists_to_check:
+            if ship in ship_list:
+                ship_list.remove(ship)
+                break
+                
+    def get_statistics(self):
+        """Get comprehensive transport statistics"""
+        return {
+            'message_ships': len(self.message_ships),
+            'cargo_ships': len(self.cargo_ships), 
+            'payment_ships': len(self.payment_ships),
+            'raiders': len(self.raiders),
+            'smugglers': len(self.smugglers),
+            'total_ships': (len(self.message_ships) + len(self.cargo_ships) + 
+                          len(self.payment_ships) + len(self.raiders) + len(self.smugglers)),
+            'active_trade_routes': self.count_active_routes(),
+            'pirate_threat_level': self.calculate_threat_level()
+        }
+        
+    def count_active_routes(self):
+        """Count active trade routes"""
+        routes = set()
+        for ship in self.cargo_ships:
+            if hasattr(ship, 'origin') and hasattr(ship, 'destination'):
+                origin_name = getattr(ship.origin, 'name', 'Unknown')
+                dest_name = getattr(ship.destination, 'name', 'Unknown')
+                routes.add(f"{origin_name}->{dest_name}")
+        return len(routes)
+        
+    def calculate_threat_level(self):
+        """Calculate current pirate threat level"""
+        if len(self.raiders) == 0:
+            return "LOW"
+        elif len(self.raiders) < 3:
+            return "MEDIUM"
+        elif len(self.raiders) < 6:
+            return "HIGH"
+        else:
+            return "EXTREME"
+            
+    def create_pirate_base(self, planet):
+        """Convert a planet to a pirate base"""
+        planet.enhanced_economy = PirateBaseEconomy(planet.name, planet)
+        planet.planet_type = "pirate_hideout"
+        planet.color = color.dark_red
+        print(f"🏴‍☠️ {planet.name} has become a pirate base!")
+        return True
+
+# Create global unified transport system
+unified_transport_system = UnifiedTransportSystemManager()
+
+def initialize_enhanced_economies():
+    """Initialize enhanced economies for all planets"""
+    print("🔄 Initializing enhanced transport system...")
+    
+    # Convert existing planets to enhanced economy system
+    for planet in planets:
+        if not hasattr(planet, 'enhanced_economy') or planet.enhanced_economy is None:
+            planet.enhanced_economy = EnhancedPlanetEconomy(planet.name, planet.planet_type, planet)
+            
+    # Create some pirate bases
+    pirate_base_count = 0
+    for planet in planets:
+        if random.random() < 0.15 and pirate_base_count < 3:  # 15% chance, max 3 bases
+            unified_transport_system.create_pirate_base(planet)
+            pirate_base_count += 1
+            
+    print(f"✅ Enhanced transport system initialized with {pirate_base_count} pirate bases")
+
 # Create systems
 random_event_system = RandomEventSystem()
 combat_system = CombatSystem()
@@ -1793,6 +4158,9 @@ faction_system = FactionSystem()
 crew_system = CrewSystem()
 time_system = TimeSystem()
 mission_system = MissionSystem()
+
+# Initialize enhanced economies after planets are created
+initialize_enhanced_economies()
 
 # Trading UI
 class TradingUI:
@@ -2063,23 +4431,24 @@ class UpgradeUI:
         # Update upgrade options
         upgrade_text = "AVAILABLE UPGRADES:\n\n"
         
-        # Cargo upgrade
-        cargo_cost = ship_upgrades.upgrade_costs['cargo']
-        cargo_affordable = "✓" if ship_upgrades.can_afford_upgrade('cargo') else "✗"
-        upgrade_text += f"1. Cargo Hold Upgrade - {cargo_cost} credits {cargo_affordable}\n"
-        upgrade_text += f"   Current: {ship_upgrades.cargo_capacity} -> {ship_upgrades.cargo_capacity + 25}\n\n"
+        # Ship component upgrades
+        components = [
+            ("cargo", "Cargo Bay", ComponentType.CARGO_BAY),
+            ("engine", "Engine", ComponentType.ENGINE),
+            ("fuel_tank", "Fuel Tank", ComponentType.FUEL_TANK),
+            ("shields", "Shields", ComponentType.SHIELDS),
+            ("weapons", "Weapons", ComponentType.WEAPONS),
+            ("life_support", "Life Support", ComponentType.LIFE_SUPPORT)
+        ]
         
-        # Engine upgrade
-        engine_cost = ship_upgrades.upgrade_costs['engine']
-        engine_affordable = "✓" if ship_upgrades.can_afford_upgrade('engine') else "✗"
-        upgrade_text += f"2. Engine Upgrade - {engine_cost} credits {engine_affordable}\n"
-        upgrade_text += f"   Current Level: {ship_upgrades.engine_level} -> {ship_upgrades.engine_level + 1}\n\n"
-        
-        # Fuel efficiency upgrade
-        fuel_cost = ship_upgrades.upgrade_costs['fuel']
-        fuel_affordable = "✓" if ship_upgrades.can_afford_upgrade('fuel') else "✗"
-        upgrade_text += f"3. Fuel Efficiency - {fuel_cost} credits {fuel_affordable}\n"
-        upgrade_text += f"   Current Level: {ship_upgrades.fuel_efficiency} -> {ship_upgrades.fuel_efficiency + 1}\n\n"
+        for i, (upgrade_key, display_name, component_type) in enumerate(components[:6]):
+            cost = ship_systems.upgrade_costs.get(upgrade_key, 999999)
+            affordable = "✓" if player_wallet.can_afford(cost) else "✗"
+            current_level = ship_systems.components[component_type].level
+            condition = ship_systems.components[component_type].condition.value
+            
+            upgrade_text += f"{i+1}. {display_name} Upgrade - {cost} credits {affordable}\n"
+            upgrade_text += f"   Level {current_level} ({condition}) -> Level {current_level + 1}\n\n"
         
         # Weapons upgrade
         weapon_cost = combat_system.weapon_level * 300
@@ -2099,24 +4468,25 @@ class UpgradeUI:
         if not self.active:
             return False
             
-        if key == '1':
-            if ship_upgrades.upgrade_cargo():
-                self.update_display()
-            else:
-                print("Cannot afford cargo upgrade!")
-            return True
-        elif key == '2':
-            if ship_upgrades.upgrade_engine():
-                self.update_display()
-            else:
-                print("Cannot afford engine upgrade!")
-            return True
-        elif key == '3':
-            if ship_upgrades.upgrade_fuel_efficiency():
-                self.update_display()
-            else:
-                print("Cannot afford fuel efficiency upgrade!")
-            return True
+        # Handle component upgrades
+        components = [
+            ("cargo", ComponentType.CARGO_BAY),
+            ("engine", ComponentType.ENGINE),
+            ("fuel_tank", ComponentType.FUEL_TANK),
+            ("shields", ComponentType.SHIELDS),
+            ("weapons", ComponentType.WEAPONS),
+            ("life_support", ComponentType.LIFE_SUPPORT)
+        ]
+        
+        if key in '123456':
+            index = int(key) - 1
+            if index < len(components):
+                upgrade_key, component_type = components[index]
+                if ship_systems.upgrade_component(component_type):
+                    self.update_display()
+                else:
+                    print(f"Cannot afford {component_type.value.lower()} upgrade!")
+                return True
         elif key == '4':
             if combat_system.upgrade_weapons():
                 self.update_display()
@@ -2626,11 +4996,44 @@ def update():
                     
     # Update time system
     time_system.update()
+    
+    # Update unified transport system
+    unified_transport_system.update()
+    
+    # Update planet economies
+    for planet in planets:
+        if hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
+            planet.enhanced_economy.update()
+            
+    # Update new persistent systems
+    weather_system.update()
+    military_manager.update()
+    dynamic_contracts.update()
 
 # Function to handle landing
 def land_on_planet():
     global nearby_planet
     if nearby_planet:
+        # Check if planet is blockaded
+        if military_manager.is_planet_blockaded(nearby_planet.name):
+            if not military_manager.can_player_access_planet(nearby_planet.name):
+                # Find blockading faction
+                blockade_ships = military_manager.blockade_zones[nearby_planet.name]
+                if blockade_ships:
+                    blockading_faction = blockade_ships[0].faction_id
+                    print(f"🚫 Access to {nearby_planet.name} blocked by {blockading_faction} forces!")
+                    print(f"💡 Improve reputation with {blockading_faction} or break the blockade to land.")
+                    
+                    # Hide landing prompt but don't land
+                    landing_prompt.enabled = False
+                    nearby_planet = None
+                    
+                    # Unfreeze player and capture mouse
+                    player.enabled = True
+                    mouse.locked = True
+                    mouse.visible = False
+                    return
+        
         # Set current planet in scene manager
         scene_manager.current_planet = nearby_planet
         # Switch to town mode
@@ -2661,6 +5064,9 @@ AmbientLight(color=Vec4(0.1, 0.1, 0.1, 1))  # Darker ambient light
 
 # Initialize scene manager after all entities are created
 scene_manager.initialize_space()
+
+# Initialize military and contract systems
+military_manager.initialize_military_presence()
 
 # Game state
 paused = False
@@ -2801,6 +5207,35 @@ def input(key):
                 mission_ui.show()
             else:
                 print("You need to be closer to the mission board!")
+                
+    if key == 'k' and not paused:
+        # Show available contracts (can be accessed anywhere)
+        print("\n📋 AVAILABLE CONTRACTS:")
+        for i, contract in enumerate(dynamic_contracts.available_contracts[:5]):
+            print(f"{i+1}. {contract.title}")
+            print(f"   Client: {contract.client_faction}")
+            print(f"   Reward: {contract.rewards.get('credits', 0)} credits")
+            print(f"   Difficulty: {'⭐' * contract.difficulty}")
+            print(f"   Time limit: {contract.time_limit/60:.0f} minutes")
+            print()
+        if not dynamic_contracts.available_contracts:
+            print("No contracts available.")
+            
+    if key == 'j' and not paused:
+        # Show active contracts
+        print("\n📋 ACTIVE CONTRACTS:")
+        for i, contract in enumerate(dynamic_contracts.active_contracts):
+            elapsed_time = time.time() - contract.start_time
+            remaining_time = contract.time_limit - elapsed_time
+            print(f"{i+1}. {contract.title}")
+            print(f"   Status: {contract.status.value}")
+            print(f"   Time remaining: {remaining_time/60:.1f} minutes")
+            print(f"   Objectives:")
+            for obj in contract.objectives:
+                print(f"     • {obj}")
+            print()
+        if not dynamic_contracts.active_contracts:
+            print("No active contracts.")
     
     # TESTING COMMANDS for the persistent economy
     if key == 'b' and scene_manager.current_state == GameState.TOWN and not paused:
@@ -2820,6 +5255,39 @@ def input(key):
         # Advance time quickly (for testing)
         print("⏰ Fast-forwarding time...")
         time_system.advance_day()
+        
+    if key == 'f' and scene_manager.current_state == GameState.SPACE and not paused:
+        # Refuel if near a planet with fuel station
+        if nearby_planet and nearby_planet.has_fuel_station:
+            fuel_needed = ship_systems.fuel_system.max_fuel - ship_systems.fuel_system.current_fuel
+            if fuel_needed > 0:
+                total_cost = int(fuel_needed * nearby_planet.fuel_price)
+                if player_wallet.can_afford(total_cost):
+                    player_wallet.spend(total_cost)
+                    ship_systems.fuel_system.refuel(fuel_needed)
+                    print(f"⛽ Refueled at {nearby_planet.name} for {total_cost} credits")
+                else:
+                    print(f"💰 Not enough credits! Refueling costs {total_cost} credits")
+            else:
+                print("⛽ Fuel tank already full!")
+        else:
+            if nearby_planet:
+                print(f"❌ {nearby_planet.name} has no fuel station")
+            else:
+                print("❌ No planet nearby for refueling")
+                
+    if key == 'g' and not paused:
+        # Emergency repair using spare parts
+        damaged_components = ship_systems.get_system_status()['damaged_components']
+        if damaged_components:
+            component_name = damaged_components[0]['type']
+            component_type = ComponentType(component_name)
+            if ship_systems.repair_component(component_type, 1):
+                print(f"🔧 Emergency repair completed on {component_name}")
+            else:
+                print("🔧 No spare parts available for repairs")
+        else:
+            print("🔧 All systems operating normally")
         
 def show_economic_info(planet_name):
     """Display detailed economic information about a planet"""
