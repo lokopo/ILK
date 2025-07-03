@@ -17,6 +17,290 @@ from typing import List, Dict, Optional
 
 app = Ursina(borderless=False)  # Make window resizable and movable
 
+# ===== ENHANCED PIRATES! FEATURES =====
+
+class ShipClass(Enum):
+    FIGHTER = "FIGHTER"
+    CORVETTE = "CORVETTE" 
+    FRIGATE = "FRIGATE"
+    DESTROYER = "DESTROYER"
+    CRUISER = "CRUISER"
+    BATTLESHIP = "BATTLESHIP"
+    CARRIER = "CARRIER"
+    FREIGHTER = "FREIGHTER"
+    TRANSPORT = "TRANSPORT"
+    MINING_BARGE = "MINING_BARGE"
+
+@dataclass
+class ShipStats:
+    max_health: int
+    armor: int
+    shield_strength: int
+    speed: float
+    maneuverability: float
+    cargo_capacity: int
+    crew_capacity: int
+    fuel_capacity: int
+    weapon_hardpoints: int
+    base_cost: int
+
+class CapturedShip:
+    def __init__(self, ship_class, name=None, condition=1.0):
+        self.ship_class = ship_class
+        self.name = name or f"{ship_class.value}-{random.randint(100, 999)}"
+        self.condition = condition
+        self.stats = self.get_base_stats()
+        self.current_health = int(self.stats.max_health * condition)
+        self.assigned_crew = []
+        self.position = Vec3(0, 0, 0)
+        self.role = "patrol"
+        self.cargo = {}
+        self.fuel = self.stats.fuel_capacity * condition
+        
+    def get_base_stats(self):
+        ship_stats = {
+            ShipClass.FIGHTER: ShipStats(100, 5, 50, 150, 0.9, 10, 2, 80, 2, 50000),
+            ShipClass.CORVETTE: ShipStats(200, 15, 100, 120, 0.8, 50, 5, 150, 4, 120000),
+            ShipClass.FRIGATE: ShipStats(500, 30, 200, 100, 0.6, 100, 15, 300, 6, 300000),
+            ShipClass.DESTROYER: ShipStats(800, 50, 300, 80, 0.5, 150, 25, 500, 8, 600000),
+            ShipClass.CRUISER: ShipStats(1200, 75, 500, 70, 0.4, 300, 50, 800, 10, 1200000),
+            ShipClass.BATTLESHIP: ShipStats(2000, 120, 800, 50, 0.3, 200, 80, 1200, 15, 2500000),
+            ShipClass.CARRIER: ShipStats(1500, 60, 400, 60, 0.3, 500, 100, 1000, 5, 2000000),
+            ShipClass.FREIGHTER: ShipStats(400, 20, 100, 70, 0.4, 1000, 10, 600, 2, 400000),
+            ShipClass.TRANSPORT: ShipStats(300, 15, 80, 80, 0.5, 200, 50, 400, 1, 250000),
+            ShipClass.MINING_BARGE: ShipStats(600, 40, 150, 40, 0.2, 800, 20, 800, 3, 800000)
+        }
+        return ship_stats.get(self.ship_class, ship_stats[ShipClass.CORVETTE])
+    
+    def get_effective_stats(self):
+        base = self.stats
+        condition_mod = self.condition
+        crew_mod = min(1.2, len(self.assigned_crew) / (base.crew_capacity * 0.5)) if base.crew_capacity > 0 else 1.0
+        
+        return {
+            'health': int(base.max_health * condition_mod),
+            'speed': base.speed * condition_mod * crew_mod,
+            'cargo': int(base.cargo_capacity * condition_mod),
+            'combat_rating': (base.armor + base.shield_strength) * condition_mod * crew_mod
+        }
+
+class FleetManager:
+    def __init__(self):
+        self.flagship = None
+        self.fleet = []
+        self.max_fleet_size = 8
+        self.fleet_reputation = 0
+        
+    def add_ship(self, ship):
+        if len(self.fleet) < self.max_fleet_size:
+            self.fleet.append(ship)
+            return True
+        return False
+    
+    def get_fleet_combat_strength(self):
+        total_strength = 0
+        for ship in self.fleet:
+            if ship.role in ['combat', 'escort', 'patrol']:
+                stats = ship.get_effective_stats()
+                total_strength += stats['combat_rating']
+        return total_strength
+    
+    def update_fleet_positions(self, flagship_pos):
+        for i, ship in enumerate(self.fleet):
+            angle = (i / len(self.fleet)) * 2 * math.pi if len(self.fleet) > 0 else 0
+            distance = 20 + (i % 3) * 10
+            offset_x = math.cos(angle) * distance
+            offset_z = math.sin(angle) * distance
+            ship.position = flagship_pos + Vec3(offset_x, 0, offset_z)
+
+class TreasureType(Enum):
+    ANCIENT_ARTIFACT = "ANCIENT_ARTIFACT"
+    ALIEN_TECHNOLOGY = "ALIEN_TECHNOLOGY"
+    SHIP_WRECKAGE = "SHIP_WRECKAGE"
+    DATA_CACHE = "DATA_CACHE"
+    MINERAL_DEPOSIT = "MINERAL_DEPOSIT"
+    LOST_CARGO = "LOST_CARGO"
+
+@dataclass
+class TreasureSite:
+    position: Vec3
+    treasure_type: TreasureType
+    difficulty: int
+    discovered: bool
+    estimated_value: int
+    description: str
+
+class TreasureHuntingSystem:
+    def __init__(self):
+        self.treasure_sites = []
+        self.scanning_range = 15.0
+        self.generate_treasure_sites()
+        
+    def generate_treasure_sites(self):
+        for _ in range(15):
+            site = TreasureSite(
+                position=Vec3(random.randint(-400, 400), 0, random.randint(-400, 400)),
+                treasure_type=random.choice(list(TreasureType)),
+                difficulty=random.randint(1, 5),
+                discovered=False,
+                estimated_value=random.randint(10000, 200000),
+                description="Mysterious signal detected"
+            )
+            self.treasure_sites.append(site)
+            
+    def scan_for_treasures(self, player_position):
+        found_treasures = []
+        for site in self.treasure_sites:
+            distance = (site.position - player_position).length()
+            if distance <= self.scanning_range and not site.discovered:
+                if random.random() < 0.2:  # 20% chance
+                    found_treasures.append(site)
+                    print(f"📡 Treasure detected! {site.treasure_type.value} at {site.position}")
+        return found_treasures
+    
+    def excavate_treasure(self, site):
+        if site.discovered:
+            return None
+            
+        excavation_roll = random.randint(1, 20)
+        if excavation_roll >= (10 + site.difficulty):
+            site.discovered = True
+            treasure_value = int(site.estimated_value * random.uniform(0.8, 1.2))
+            print(f"💎 Treasure found! {site.treasure_type.value} worth {treasure_value} credits!")
+            return treasure_value
+        else:
+            print(f"❌ Excavation failed. Try again later.")
+            return None
+
+class AssaultType(Enum):
+    ORBITAL_BOMBARDMENT = "ORBITAL_BOMBARDMENT"
+    SURGICAL_STRIKE = "SURGICAL_STRIKE"
+    BLOCKADE = "BLOCKADE"
+
+class OrbitalCombatSystem:
+    def __init__(self):
+        self.bombardment_active = False
+        
+    def initiate_orbital_assault(self, planet_name, assault_type, fleet_strength):
+        print(f"🚀 Initiating {assault_type.value} on {planet_name}")
+        
+        # Calculate success based on fleet strength
+        base_chance = 0.6
+        strength_bonus = min(0.3, fleet_strength / 1000)
+        success_chance = base_chance + strength_bonus
+        
+        if random.random() < success_chance:
+            if assault_type == AssaultType.ORBITAL_BOMBARDMENT:
+                credits_gained = random.randint(50000, 200000)
+                reputation_loss = -25  # Major war crime
+                print(f"💥 Bombardment successful! Gained {credits_gained} credits.")
+                print(f"⚠️ WARNING: Massive reputation loss (-25) with all factions!")
+                return {'success': True, 'credits': credits_gained, 'reputation': reputation_loss}
+            elif assault_type == AssaultType.SURGICAL_STRIKE:
+                credits_gained = random.randint(20000, 80000)
+                reputation_loss = -10
+                print(f"🎯 Surgical strike successful! Gained {credits_gained} credits.")
+                return {'success': True, 'credits': credits_gained, 'reputation': reputation_loss}
+        else:
+            print(f"❌ Assault failed! Fleet took casualties.")
+            return {'success': False, 'fleet_damage': random.randint(10, 30)}
+
+class PersonalSkill(Enum):
+    PILOTING = "PILOTING"
+    COMBAT = "COMBAT"
+    LEADERSHIP = "LEADERSHIP"
+    ENGINEERING = "ENGINEERING"
+    TRADING = "TRADING"
+    DIPLOMACY = "DIPLOMACY"
+
+class CharacterDevelopment:
+    def __init__(self):
+        self.age = 25
+        self.skills = {skill: random.randint(3, 7) for skill in PersonalSkill}
+        self.experience_points = {skill: 0 for skill in PersonalSkill}
+        self.legendary_achievements = []
+        self.years_active = 0
+        
+    def gain_experience(self, skill_type, amount):
+        if skill_type in self.experience_points:
+            self.experience_points[skill_type] += amount
+            required_exp = int(self.skills[skill_type] * 100)
+            if self.experience_points[skill_type] >= required_exp:
+                self.skills[skill_type] += 0.5
+                self.experience_points[skill_type] = 0
+                print(f"📈 {skill_type.value} skill improved to {self.skills[skill_type]:.1f}!")
+                
+    def advance_time(self, days):
+        years_passed = days / 365.0
+        old_age = self.age
+        self.age += years_passed
+        self.years_active += years_passed
+        
+        if int(old_age) != int(self.age):
+            print(f"🎂 Another year passes. You are now {int(self.age)} years old.")
+
+class BoardingAction(Enum):
+    BREACH_AND_CLEAR = "BREACH_AND_CLEAR"
+    STEALTH_INFILTRATION = "STEALTH_INFILTRATION"
+    NEGOTIATED_SURRENDER = "NEGOTIATED_SURRENDER"
+
+class ShipBoardingSystem:
+    def __init__(self):
+        self.boarding_active = False
+        
+    def initiate_boarding(self, target_ship_type, boarding_action):
+        print(f"🚀 Initiating boarding: {boarding_action.value}")
+        
+        success_chances = {
+            BoardingAction.BREACH_AND_CLEAR: 0.7,
+            BoardingAction.STEALTH_INFILTRATION: 0.5,
+            BoardingAction.NEGOTIATED_SURRENDER: 0.4
+        }
+        
+        if random.random() < success_chances[boarding_action]:
+            cargo_value = random.randint(15000, 80000)
+            ship_condition = random.uniform(0.6, 1.0)
+            
+            print(f"✅ Boarding successful! Captured {cargo_value} credits worth of cargo.")
+            print(f"Ship condition: {ship_condition*100:.0f}%")
+            
+            if ship_condition > 0.7:
+                # Offer to add ship to fleet
+                ship_class = random.choice(list(ShipClass))
+                captured_ship = CapturedShip(ship_class, condition=ship_condition)
+                print(f"💡 {ship_class.value} captured! Consider adding to fleet.")
+                return {'success': True, 'cargo': cargo_value, 'ship': captured_ship}
+            else:
+                return {'success': True, 'cargo': cargo_value, 'ship': None}
+        else:
+            print(f"❌ Boarding failed!")
+            return {'success': False}
+
+# ===== ENHANCED FEATURES INTEGRATION =====
+
+class EnhancedPiratesFeatures:
+    def __init__(self):
+        self.fleet_manager = FleetManager()
+        self.treasure_hunting = TreasureHuntingSystem()
+        self.orbital_combat = OrbitalCombatSystem()
+        self.character_development = CharacterDevelopment()
+        self.ship_boarding = ShipBoardingSystem()
+        
+        print("🚀 Enhanced Pirates! features loaded!")
+        print("   Fleet Management, Treasure Hunting, Orbital Combat, Character Development")
+    
+    def update(self, dt, player_position, current_time):
+        # Update character aging (convert seconds to days)
+        self.character_development.advance_time(dt / 86400.0)
+        
+        # Update fleet positions
+        if self.fleet_manager.fleet:
+            self.fleet_manager.update_fleet_positions(player_position)
+            
+        # Random treasure scanning
+        if random.random() < 0.005:  # 0.5% chance per update
+            treasures = self.treasure_hunting.scan_for_treasures(player_position)
+
 # Trading and Economy System
 class Commodity:
     def __init__(self, name, base_price, category="general"):
@@ -1855,6 +2139,9 @@ market_system = MarketSystem()
 player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
 player_wallet = PlayerWallet(starting_credits=500)
 ship_systems = RealisticShipSystems()
+
+# Initialize enhanced Pirates! features
+enhanced_features = EnhancedPiratesFeatures()
 
 # Create a rotating skybox instead of stars
 class RotatingSkybox(Entity):
@@ -4997,6 +5284,9 @@ def update():
     # Update time system
     time_system.update()
     
+    # Update enhanced Pirates! features
+    enhanced_features.update(time.dt, player.position, time.time())
+    
     # Update unified transport system
     unified_transport_system.update()
     
@@ -5288,6 +5578,143 @@ def input(key):
                 print("🔧 No spare parts available for repairs")
         else:
             print("🔧 All systems operating normally")
+    
+    # ===== ENHANCED PIRATES! FEATURES CONTROLS =====
+    
+    if key == 'v' and not paused:
+        # Fleet Management
+        fleet = enhanced_features.fleet_manager.fleet
+        if fleet:
+            print("\n🚢 FLEET STATUS:")
+            for i, ship in enumerate(fleet):
+                stats = ship.get_effective_stats()
+                print(f"{i+1}. {ship.name} ({ship.ship_class.value})")
+                print(f"   Role: {ship.role} | Condition: {ship.condition*100:.0f}%")
+                print(f"   Combat Rating: {stats['combat_rating']:.0f}")
+            total_strength = enhanced_features.fleet_manager.get_fleet_combat_strength()
+            print(f"\nTotal Fleet Combat Strength: {total_strength:.0f}")
+        else:
+            print("🚢 No ships in fleet. Capture ships through boarding actions!")
+    
+    if key == 'z' and not paused:
+        # Treasure Scanner
+        treasures = enhanced_features.treasure_hunting.scan_for_treasures(player.position)
+        if treasures:
+            print("📡 TREASURE SCANNER ACTIVE")
+        else:
+            print("📡 No treasures detected in range. Fly around to scan more areas!")
+    
+    if key == 'x' and not paused:
+        # Character Profile
+        char = enhanced_features.character_development
+        print(f"\n👤 CHARACTER PROFILE:")
+        print(f"Age: {int(char.age)} years old")
+        print(f"Years Active: {char.years_active:.1f}")
+        print(f"\n📊 SKILLS:")
+        for skill, level in char.skills.items():
+            print(f"  {skill.value}: {level:.1f}")
+        if char.legendary_achievements:
+            print(f"\n🏆 ACHIEVEMENTS:")
+            for achievement in char.legendary_achievements:
+                print(f"  • {achievement['name']} (Age {achievement['age_earned']})")
+    
+    if key == 'o' and not paused:
+        # Orbital Operations Menu
+        if scene_manager.current_state == GameState.SPACE and nearby_planet:
+            fleet_strength = enhanced_features.fleet_manager.get_fleet_combat_strength()
+            print(f"\n🚀 ORBITAL OPERATIONS - {nearby_planet.name}")
+            print(f"Fleet Combat Strength: {fleet_strength:.0f}")
+            print("1. Orbital Bombardment (High damage, major reputation loss)")
+            print("2. Surgical Strike (Precise, moderate reputation loss)")
+            print("3. Establish Blockade (Economic pressure)")
+            print("Press 1-3 to execute, or any other key to cancel")
+        else:
+            print("🚀 Must be near a planet in space to conduct orbital operations!")
+    
+    if key in '123' and not paused:
+        # Execute orbital operations
+        if scene_manager.current_state == GameState.SPACE and nearby_planet:
+            fleet_strength = enhanced_features.fleet_manager.get_fleet_combat_strength()
+            if fleet_strength < 100:
+                print("⚠️ Warning: Fleet strength too low for major operations!")
+                
+            if key == '1':
+                result = enhanced_features.orbital_combat.initiate_orbital_assault(
+                    nearby_planet.name, AssaultType.ORBITAL_BOMBARDMENT, fleet_strength)
+            elif key == '2':
+                result = enhanced_features.orbital_combat.initiate_orbital_assault(
+                    nearby_planet.name, AssaultType.SURGICAL_STRIKE, fleet_strength)
+            elif key == '3':
+                result = enhanced_features.orbital_combat.initiate_orbital_assault(
+                    nearby_planet.name, AssaultType.BLOCKADE, fleet_strength)
+                    
+            if 'result' in locals() and result['success']:
+                player_wallet.earn(result['credits'])
+                if 'reputation' in result:
+                    # Apply reputation changes to all factions
+                    for faction_id in faction_system.factions.keys():
+                        faction_system.change_reputation(faction_id, result['reputation'])
+    
+    if key == 'y' and not paused:
+        # Attempt treasure excavation at current location
+        for site in enhanced_features.treasure_hunting.treasure_sites:
+            distance = (site.position - player.position).length()
+            if distance < 5.0 and not site.discovered:  # Within 5 units
+                skill_level = enhanced_features.character_development.skills[PersonalSkill.ENGINEERING]
+                treasure_value = enhanced_features.treasure_hunting.excavate_treasure(site)
+                if treasure_value:
+                    player_wallet.earn(treasure_value)
+                    enhanced_features.character_development.gain_experience(PersonalSkill.ENGINEERING, 10)
+                break
+        else:
+            print("🔍 No treasure sites within excavation range.")
+    
+    if key == 'l' and not paused:
+        # Simulate boarding action (when encountering ships)
+        if scene_manager.current_state == GameState.SPACE:
+            print("\n⚔️ BOARDING ACTION SIMULATION")
+            print("1. Breach and Clear (High success, moderate damage)")
+            print("2. Stealth Infiltration (Moderate success, minimal damage)")
+            print("3. Negotiated Surrender (Low success, no damage)")
+            print("Press 1-3 to board, or any other key to cancel")
+            
+    if key in '123' and scene_manager.current_state == GameState.SPACE:
+        # Execute boarding action
+        boarding_actions = {
+            '1': BoardingAction.BREACH_AND_CLEAR,
+            '2': BoardingAction.STEALTH_INFILTRATION,
+            '3': BoardingAction.NEGOTIATED_SURRENDER
+        }
+        
+        action = boarding_actions.get(key)
+        if action:
+            result = enhanced_features.ship_boarding.initiate_boarding("Enemy Merchant", action)
+            if result['success']:
+                player_wallet.earn(result['cargo'])
+                enhanced_features.character_development.gain_experience(PersonalSkill.COMBAT, 5)
+                
+                if result.get('ship'):
+                    captured_ship = result['ship']
+                    if enhanced_features.fleet_manager.add_ship(captured_ship):
+                        print(f"🚢 {captured_ship.name} added to your fleet!")
+                    else:
+                        print(f"🚢 Fleet at maximum capacity. {captured_ship.name} abandoned.")
+    
+    if key == 'p' and not paused:
+        # Show enhanced skills and advancement opportunities
+        char = enhanced_features.character_development
+        print(f"\n📈 SKILL ADVANCEMENT:")
+        for skill, level in char.skills.items():
+            exp = char.experience_points[skill]
+            needed = int(level * 100)
+            print(f"  {skill.value}: {level:.1f} ({exp}/{needed} XP)")
+        print(f"\n🎯 Gain experience by:")
+        print(f"  • Trading (Trading skill)")
+        print(f"  • Combat/Boarding (Combat skill)")
+        print(f"  • Treasure hunting (Engineering skill)")
+        print(f"  • Diplomatic missions (Diplomacy skill)")
+        print(f"  • Fleet operations (Leadership skill)")
+        print(f"  • Flying and exploration (Piloting skill)")
         
 def show_economic_info(planet_name):
     """Display detailed economic information about a planet"""
