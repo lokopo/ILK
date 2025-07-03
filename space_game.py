@@ -2245,6 +2245,14 @@ dynamic_contracts = DynamicContractSystem()
 class MessageType(Enum):
     GOODS_REQUEST = "GOODS_REQUEST"
     PAYMENT = "PAYMENT"
+    WAR_DECLARATION = "WAR_DECLARATION"
+    PEACE_TREATY = "PEACE_TREATY"
+    MILITARY_ORDERS = "MILITARY_ORDERS"
+    TRADE_AGREEMENT = "TRADE_AGREEMENT"
+    PIRATE_WARNING = "PIRATE_WARNING"
+    NEWS_BULLETIN = "NEWS_BULLETIN"
+    DIPLOMATIC_LETTER = "DIPLOMATIC_LETTER"
+    INTELLIGENCE_REPORT = "INTELLIGENCE_REPORT"
 
 class UrgencyLevel(Enum):
     LOW = "LOW"
@@ -2278,9 +2286,326 @@ class CargoIntelligence:
     route_danger: float
     intel_timestamp: float
 
+@dataclass
+class PhysicalLetter:
+    """Physical letter that must be delivered by ship"""
+    letter_id: str
+    message_type: MessageType
+    sender_faction: str
+    sender_planet: str
+    recipient_faction: str
+    recipient_planet: str
+    subject: str
+    content: str
+    timestamp: float
+    urgency: UrgencyLevel
+    requires_response: bool = False
+    
+@dataclass 
+class PlanetaryNews:
+    """Information known at a specific planet"""
+    news_id: str
+    headline: str
+    details: str
+    source_planet: str
+    timestamp: float
+    reliability: float  # 0.0 to 1.0 - how accurate the news is
+    spread_count: int   # How many times it's been passed along
+    
+@dataclass
+class WordOfMouthInfo:
+    """Information that spreads through word-of-mouth"""
+    info_id: str
+    info_type: str  # "war", "pirate_attack", "trade_opportunity", etc.
+    content: str
+    origin_planet: str
+    current_accuracy: float  # Degrades as it spreads
+    age_hours: float
+    visited_planets: set
+
+class PhysicalCommunicationSystem:
+    """Handles all physical communication - letters, word-of-mouth, news spreading"""
+    
+    def __init__(self):
+        self.active_letters = []  # Letters being delivered by ships
+        self.planetary_mailboxes = {}  # Planet -> list of received letters
+        self.planetary_news = {}  # Planet -> list of news/rumors known
+        self.word_of_mouth_pool = []  # Active rumors spreading
+        self.letter_counter = 0
+        
+    def send_letter(self, sender_planet, recipient_planet, letter_type, subject, content, urgency=UrgencyLevel.NORMAL, sender_faction="", recipient_faction=""):
+        """Send a physical letter via message ship"""
+        self.letter_counter += 1
+        
+        letter = PhysicalLetter(
+            letter_id=f"LETTER-{self.letter_counter}",
+            message_type=letter_type,
+            sender_faction=sender_faction,
+            sender_planet=getattr(sender_planet, 'name', str(sender_planet)),
+            recipient_faction=recipient_faction,
+            recipient_planet=getattr(recipient_planet, 'name', str(recipient_planet)),
+            subject=subject,
+            content=content,
+            timestamp=time.time(),
+            urgency=urgency,
+            requires_response=(letter_type in [MessageType.WAR_DECLARATION, MessageType.PEACE_TREATY, MessageType.DIPLOMATIC_LETTER])
+        )
+        
+        # Create message ship to deliver the letter
+        message_ship = MessageShip(sender_planet, recipient_planet, letter_type, letter)
+        unified_transport_system.message_ships.append(message_ship)
+        
+        print(f"📨 {letter_type.value} sent: {sender_planet.name} → {recipient_planet.name}")
+        print(f"   Subject: {subject}")
+        
+        return letter
+        
+    def declare_war(self, declaring_faction, target_faction, declaration_text):
+        """PHYSICAL WAR DECLARATION - must send letters to all faction planets"""
+        print(f"⚔️ {declaring_faction} DECLARES WAR on {target_faction}!")
+        print(f"📜 War declaration: {declaration_text}")
+        
+        # Find faction home planets and send physical letters
+        faction_planets = self.find_faction_planets(target_faction)
+        faction_leader_planet = self.find_faction_capital(declaring_faction)
+        
+        if not faction_leader_planet:
+            print(f"❌ Cannot declare war - {declaring_faction} has no capital planet!")
+            return False
+            
+        letters_sent = 0
+        for planet in faction_planets:
+            war_letter = self.send_letter(
+                sender_planet=faction_leader_planet,
+                recipient_planet=planet,
+                letter_type=MessageType.WAR_DECLARATION,
+                subject=f"DECLARATION OF WAR",
+                content=f"By order of {declaring_faction}, we hereby declare WAR upon {target_faction}. {declaration_text}",
+                urgency=UrgencyLevel.CRITICAL,
+                sender_faction=declaring_faction,
+                recipient_faction=target_faction
+            )
+            letters_sent += 1
+            
+        # Also notify own faction planets
+        own_planets = self.find_faction_planets(declaring_faction)
+        for planet in own_planets:
+            if planet != faction_leader_planet:
+                self.send_letter(
+                    sender_planet=faction_leader_planet,
+                    recipient_planet=planet,
+                    letter_type=MessageType.MILITARY_ORDERS,
+                    subject=f"WAR ORDERS",
+                    content=f"We are now at WAR with {target_faction}. Prepare defenses and military operations.",
+                    urgency=UrgencyLevel.CRITICAL,
+                    sender_faction=declaring_faction,
+                    recipient_faction=declaring_faction
+                )
+                
+        print(f"📫 {letters_sent} war declaration letters dispatched by ship")
+        
+        # Create word-of-mouth rumor
+        self.create_rumor(
+            info_type="war_declaration",
+            content=f"{declaring_faction} has declared war on {target_faction}",
+            origin_planet=faction_leader_planet.name,
+            accuracy=0.9
+        )
+        
+        return True
+        
+    def find_faction_planets(self, faction_name):
+        """Find all planets belonging to a faction"""
+        faction_planets = []
+        for planet in planets:
+            if hasattr(planet, 'faction') and planet.faction == faction_name:
+                faction_planets.append(planet)
+            elif hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
+                # Check planet type for faction association
+                if faction_name.lower() in planet.planet_type.lower():
+                    faction_planets.append(planet)
+        return faction_planets
+        
+    def find_faction_capital(self, faction_name):
+        """Find the capital/leader planet of a faction"""
+        faction_planets = self.find_faction_planets(faction_name)
+        if faction_planets:
+            # Capital is usually the largest/wealthiest planet
+            best_planet = max(faction_planets, key=lambda p: getattr(p.enhanced_economy, 'calculate_total_wealth', lambda: 0)() if hasattr(p, 'enhanced_economy') else 0)
+            return best_planet
+        return None
+        
+    def deliver_letter(self, letter, destination_planet):
+        """Deliver a letter to a planet's mailbox"""
+        planet_name = getattr(destination_planet, 'name', str(destination_planet))
+        
+        if planet_name not in self.planetary_mailboxes:
+            self.planetary_mailboxes[planet_name] = []
+            
+        self.planetary_mailboxes[planet_name].append(letter)
+        
+        print(f"📬 Letter delivered to {planet_name}: {letter.subject}")
+        
+        # Process urgent letters immediately
+        if letter.urgency == UrgencyLevel.CRITICAL:
+            self.process_urgent_letter(letter, destination_planet)
+            
+        # Create word-of-mouth from letter content
+        if letter.message_type in [MessageType.WAR_DECLARATION, MessageType.PIRATE_WARNING]:
+            self.create_rumor(
+                info_type=letter.message_type.value.lower(),
+                content=letter.content,
+                origin_planet=planet_name,
+                accuracy=0.95  # Letters are very accurate
+            )
+            
+    def process_urgent_letter(self, letter, planet):
+        """Process urgent letters that require immediate action"""
+        if letter.message_type == MessageType.WAR_DECLARATION:
+            print(f"🚨 {planet.name} receives WAR DECLARATION from {letter.sender_faction}!")
+            # Planet now knows about the war
+            self.add_planetary_news(
+                planet_name=planet.name,
+                headline=f"WAR DECLARED: {letter.sender_faction} vs {letter.recipient_faction}",
+                details=letter.content,
+                source=letter.sender_planet,
+                reliability=1.0
+            )
+            
+        elif letter.message_type == MessageType.PIRATE_WARNING:
+            print(f"⚠️ {planet.name} receives PIRATE WARNING!")
+            if hasattr(planet, 'enhanced_economy'):
+                planet.enhanced_economy.record_pirate_attack()
+                
+    def create_rumor(self, info_type, content, origin_planet, accuracy=0.8):
+        """Create a word-of-mouth rumor that will spread"""
+        rumor = WordOfMouthInfo(
+            info_id=f"RUMOR-{int(time.time())}-{random.randint(1000, 9999)}",
+            info_type=info_type,
+            content=content,
+            origin_planet=origin_planet,
+            current_accuracy=accuracy,
+            age_hours=0,
+            visited_planets={origin_planet}
+        )
+        
+        self.word_of_mouth_pool.append(rumor)
+        print(f"💬 Rumor started at {origin_planet}: {content[:50]}...")
+        
+    def spread_word_of_mouth(self):
+        """Spread rumors through trader and traveler word-of-mouth"""
+        for rumor in self.word_of_mouth_pool[:]:
+            # Age the rumor
+            rumor.age_hours += 1/60  # Assuming 1 minute = 1 hour game time
+            
+            # Accuracy degrades over time and spreading
+            accuracy_decay = 0.95 ** rumor.spread_count
+            rumor.current_accuracy *= accuracy_decay
+            
+            # Remove very old or inaccurate rumors
+            if rumor.age_hours > 168 or rumor.current_accuracy < 0.3:  # 1 week or <30% accuracy
+                self.word_of_mouth_pool.remove(rumor)
+                continue
+                
+            # Spread to nearby planets through cargo ships
+            self.spread_rumor_via_ships(rumor)
+            
+    def spread_rumor_via_ships(self, rumor):
+        """Spread rumors through cargo ships and travelers"""
+        for ship in unified_transport_system.cargo_ships:
+            if hasattr(ship, 'destination') and hasattr(ship.destination, 'name'):
+                dest_name = ship.destination.name
+                
+                # Ships carry news from their origin
+                if hasattr(ship, 'origin') and ship.origin.name in rumor.visited_planets:
+                    if dest_name not in rumor.visited_planets and random.random() < 0.3:  # 30% chance
+                        rumor.visited_planets.add(dest_name)
+                        rumor.spread_count += 1
+                        
+                        # Add news to destination planet
+                        self.add_planetary_news(
+                            planet_name=dest_name,
+                            headline=f"Traveler's Tale: {rumor.info_type.title()}",
+                            details=rumor.content,
+                            source=f"Trader from {ship.origin.name}",
+                            reliability=rumor.current_accuracy
+                        )
+                        
+                        print(f"💬 Rumor spread to {dest_name} via cargo ship")
+                        
+    def add_planetary_news(self, planet_name, headline, details, source, reliability=0.8):
+        """Add news/information to a planet's knowledge"""
+        if planet_name not in self.planetary_news:
+            self.planetary_news[planet_name] = []
+            
+        news = PlanetaryNews(
+            news_id=f"NEWS-{int(time.time())}-{random.randint(100, 999)}",
+            headline=headline,
+            details=details,
+            source_planet=source,
+            timestamp=time.time(),
+            reliability=reliability,
+            spread_count=0
+        )
+        
+        self.planetary_news[planet_name].append(news)
+        
+    def get_planet_knowledge(self, planet_name):
+        """Get all information (letters + news) known at a planet"""
+        letters = self.planetary_mailboxes.get(planet_name, [])
+        news = self.planetary_news.get(planet_name, [])
+        
+        return {
+            'letters': letters,
+            'news': news,
+            'total_items': len(letters) + len(news)
+        }
+        
+    def player_visits_planet(self, planet_name):
+        """When player visits a planet, they learn local news and can spread rumors"""
+        knowledge = self.get_planet_knowledge(planet_name)
+        
+        if knowledge['total_items'] > 0:
+            print(f"📰 Local news and letters at {planet_name}:")
+            
+            # Show recent letters (if any)
+            for letter in knowledge['letters'][-3:]:  # Last 3 letters
+                age_hours = (time.time() - letter.timestamp) / 3600
+                print(f"   📨 {letter.subject} (from {letter.sender_planet}, {age_hours:.1f}h ago)")
+                
+            # Show recent news
+            for news in knowledge['news'][-3:]:  # Last 3 news items
+                age_hours = (time.time() - news.timestamp) / 3600
+                accuracy_str = f"{news.reliability:.0%} reliable" if news.reliability < 0.9 else "confirmed"
+                print(f"   📰 {news.headline} ({accuracy_str}, {age_hours:.1f}h ago)")
+                
+        # Player can now spread this information to other planets they visit
+        return knowledge
+        
+    def update(self):
+        """Update the physical communication system"""
+        self.spread_word_of_mouth()
+        
+        # Clean up old letters and news
+        current_time = time.time()
+        for planet_name in list(self.planetary_mailboxes.keys()):
+            # Keep letters for 30 days
+            self.planetary_mailboxes[planet_name] = [
+                letter for letter in self.planetary_mailboxes[planet_name]
+                if current_time - letter.timestamp < 2592000  # 30 days
+            ]
+            
+        for planet_name in list(self.planetary_news.keys()):
+            # Keep news for 14 days
+            self.planetary_news[planet_name] = [
+                news for news in self.planetary_news[planet_name]
+                if current_time - news.timestamp < 1209600  # 14 days
+            ]
+
 # Global systems
 market_system = MarketSystem()
 player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
+physical_communication = PhysicalCommunicationSystem()
 player_wallet = PlayerWallet(starting_credits=500)
 ship_systems = RealisticShipSystems()
 
@@ -3328,7 +3653,7 @@ class TransportShip(Entity):
         destroy(self)
 
 class MessageShip(TransportShip):
-    """Ship carrying messages between planets"""
+    """Ship carrying physical letters between planets"""
     
     def __init__(self, origin_planet, destination_planet, message_type, payload):
         super().__init__(
@@ -3340,17 +3665,29 @@ class MessageShip(TransportShip):
         )
         
         self.message_type = message_type
-        self.payload = payload
-        self.speed = 15.0
+        self.payload = payload  # Should be a PhysicalLetter object
+        self.speed = 15.0  # Faster than cargo ships for urgent messages
         
-        print(f"📨 Message ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
+        # Display letter type
+        if isinstance(payload, PhysicalLetter):
+            print(f"📨 Letter courier launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
+            print(f"   📜 Carrying: {payload.subject}")
+        else:
+            print(f"📨 Message ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
         
     def on_arrival(self):
-        """Deliver message to destination"""
-        if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
-            self.destination.enhanced_economy.receive_message(self.message_type, self.payload)
+        """Deliver letter to destination planet's mailbox"""
+        destination_name = getattr(self.destination, 'name', 'Unknown')
+        
+        # Handle physical letters through the communication system
+        if isinstance(self.payload, PhysicalLetter):
+            physical_communication.deliver_letter(self.payload, self.destination)
+        else:
+            # Fallback for old message types
+            if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
+                self.destination.enhanced_economy.receive_message(self.message_type, self.payload)
+            print(f"📬 Message delivered to {destination_name}")
             
-        print(f"📬 Message delivered to {getattr(self.destination, 'name', 'Unknown')}")
         super().on_arrival()
 
 class CargoShip(TransportShip):
@@ -3560,16 +3897,34 @@ class PirateRaider(TransportShip):
             
     def increase_regional_threat(self, cargo_ship):
         """LOGICAL: Successful pirate attacks increase regional threat"""
-        # Find nearby planets and warn them
-        if hasattr(cargo_ship, 'position'):
+        # PHYSICAL COMMUNICATION: Send warning letters to nearby planets
+        if hasattr(cargo_ship, 'position') and hasattr(cargo_ship, 'destination'):
+            attack_location = cargo_ship.position
+            victim_planet = cargo_ship.destination
+            
+            # Send physical pirate warning letters to nearby planets
             for planet in planets:
                 if hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
-                    distance = (planet.position - cargo_ship.position).length() if hasattr(planet, 'position') else 1000
-                    if distance < 300:  # Within threat radius
-                        # Nearby planets hear about the attack
-                        if random.random() < 0.6:  # 60% chance
-                            planet.enhanced_economy.record_pirate_attack()
-                            print(f"📡 {planet.name} receives pirate threat warning")
+                    distance = (planet.position - attack_location).length() if hasattr(planet, 'position') else 1000
+                    if distance < 300 and planet != victim_planet:  # Within threat radius, not victim
+                        # Send pirate warning letter
+                        if random.random() < 0.4:  # 40% chance nearby planets send warnings
+                            physical_communication.send_letter(
+                                sender_planet=victim_planet,
+                                recipient_planet=planet,
+                                letter_type=MessageType.PIRATE_WARNING,
+                                subject="PIRATE ATTACK WARNING",
+                                content=f"Pirates attacked cargo ship near {victim_planet.name}. Exercise extreme caution in this sector.",
+                                urgency=UrgencyLevel.URGENT
+                            )
+                            
+            # Create word-of-mouth rumor about the attack
+            physical_communication.create_rumor(
+                info_type="pirate_attack",
+                content=f"Pirates attacked cargo ship bound for {victim_planet.name}",
+                origin_planet=victim_planet.name,
+                accuracy=0.8
+            )
             
     def patrol_movement(self):
         """Random patrol movement when no targets found"""
@@ -5555,6 +5910,9 @@ def update():
     # Update time system
     time_system.update()
     
+    # Update physical communication system
+    physical_communication.update()
+    
     # Update enhanced Pirates! features
     enhanced_features.update(time.dt, player.position, time.time())
     
@@ -5594,6 +5952,10 @@ def land_on_planet():
                     mouse.locked = True
                     mouse.visible = False
                     return
+        
+        # PHYSICAL COMMUNICATION: Player learns local news upon landing
+        print(f"\n🚀 Landing on {nearby_planet.name}...")
+        physical_communication.player_visits_planet(nearby_planet.name)
         
         # Set current planet in scene manager
         scene_manager.current_planet = nearby_planet
@@ -5986,6 +6348,64 @@ def input(key):
         print(f"  • Diplomatic missions (Diplomacy skill)")
         print(f"  • Fleet operations (Leadership skill)")
         print(f"  • Flying and exploration (Piloting skill)")
+        
+    # TESTING PHYSICAL COMMUNICATION SYSTEM
+    if key == 'w' and not paused:
+        # Test war declaration system
+        print("\n⚔️ TESTING WAR DECLARATION SYSTEM")
+        result = physical_communication.declare_war(
+            declaring_faction="Terran Federation",
+            target_faction="Mars Republic", 
+            declaration_text="Mars Republic has violated trade agreements and territorial boundaries."
+        )
+        if result:
+            print("📜 War declaration letters are being dispatched by courier ships!")
+        else:
+            print("❌ War declaration failed!")
+            
+    if key == 'e' and not paused:
+        # Test letter sending system
+        if len(planets) >= 2:
+            sender = planets[0]
+            recipient = planets[1]
+            physical_communication.send_letter(
+                sender_planet=sender,
+                recipient_planet=recipient,
+                letter_type=MessageType.DIPLOMATIC_LETTER,
+                subject="Trade Proposal",
+                content="We propose a mutual trade agreement for the benefit of both our peoples.",
+                urgency=UrgencyLevel.NORMAL
+            )
+            print(f"📨 Test letter sent from {sender.name} to {recipient.name}")
+        else:
+            print("❌ Need at least 2 planets for letter test!")
+            
+    if key == 'q' and not paused:
+        # Show communication system status
+        print("\n📡 PHYSICAL COMMUNICATION SYSTEM STATUS")
+        print(f"Active Letter Ships: {len(unified_transport_system.message_ships)}")
+        print(f"Active Rumors: {len(physical_communication.word_of_mouth_pool)}")
+        
+        # Show planets with mail/news
+        planets_with_mail = 0
+        planets_with_news = 0
+        for planet_name in physical_communication.planetary_mailboxes:
+            if physical_communication.planetary_mailboxes[planet_name]:
+                planets_with_mail += 1
+        for planet_name in physical_communication.planetary_news:
+            if physical_communication.planetary_news[planet_name]:
+                planets_with_news += 1
+                
+        print(f"Planets with Mail: {planets_with_mail}")
+        print(f"Planets with News/Rumors: {planets_with_news}")
+        
+        if physical_communication.word_of_mouth_pool:
+            print("\n💬 ACTIVE RUMORS:")
+            for rumor in physical_communication.word_of_mouth_pool[:3]:  # Show first 3
+                age_str = f"{rumor.age_hours:.1f}h old"
+                accuracy_str = f"{rumor.current_accuracy:.0%} accurate"
+                spread_str = f"spread to {len(rumor.visited_planets)} planets"
+                print(f"   • {rumor.content[:40]}... ({age_str}, {accuracy_str}, {spread_str})")
         
 def show_economic_info(planet_name):
     """Display detailed economic information about a planet"""
