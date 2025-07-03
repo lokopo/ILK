@@ -17,6 +17,298 @@ from typing import List, Dict, Optional
 
 app = Ursina(borderless=False)  # Make window resizable and movable
 
+# ===== ENHANCED PIRATES! FEATURES =====
+
+class ShipClass(Enum):
+    FIGHTER = "FIGHTER"
+    CORVETTE = "CORVETTE" 
+    FRIGATE = "FRIGATE"
+    DESTROYER = "DESTROYER"
+    CRUISER = "CRUISER"
+    BATTLESHIP = "BATTLESHIP"
+    CARRIER = "CARRIER"
+    FREIGHTER = "FREIGHTER"
+    TRANSPORT = "TRANSPORT"
+    MINING_BARGE = "MINING_BARGE"
+
+@dataclass
+class ShipStats:
+    max_health: int
+    armor: int
+    shield_strength: int
+    speed: float
+    maneuverability: float
+    cargo_capacity: int
+    crew_capacity: int
+    fuel_capacity: int
+    weapon_hardpoints: int
+    base_cost: int
+
+class CapturedShip:
+    def __init__(self, ship_class, name=None, condition=1.0):
+        self.ship_class = ship_class
+        self.name = name or f"{ship_class.value}-{random.randint(100, 999)}"
+        self.condition = condition
+        self.stats = self.get_base_stats()
+        self.current_health = int(self.stats.max_health * condition)
+        self.assigned_crew = []
+        self.position = Vec3(0, 0, 0)
+        self.role = "patrol"
+        self.cargo = {}
+        self.fuel = self.stats.fuel_capacity * condition
+        
+    def get_base_stats(self):
+        ship_stats = {
+            ShipClass.FIGHTER: ShipStats(100, 5, 50, 150, 0.9, 10, 2, 80, 2, 50000),
+            ShipClass.CORVETTE: ShipStats(200, 15, 100, 120, 0.8, 50, 5, 150, 4, 120000),
+            ShipClass.FRIGATE: ShipStats(500, 30, 200, 100, 0.6, 100, 15, 300, 6, 300000),
+            ShipClass.DESTROYER: ShipStats(800, 50, 300, 80, 0.5, 150, 25, 500, 8, 600000),
+            ShipClass.CRUISER: ShipStats(1200, 75, 500, 70, 0.4, 300, 50, 800, 10, 1200000),
+            ShipClass.BATTLESHIP: ShipStats(2000, 120, 800, 50, 0.3, 200, 80, 1200, 15, 2500000),
+            ShipClass.CARRIER: ShipStats(1500, 60, 400, 60, 0.3, 500, 100, 1000, 5, 2000000),
+            ShipClass.FREIGHTER: ShipStats(400, 20, 100, 70, 0.4, 1000, 10, 600, 2, 400000),
+            ShipClass.TRANSPORT: ShipStats(300, 15, 80, 80, 0.5, 200, 50, 400, 1, 250000),
+            ShipClass.MINING_BARGE: ShipStats(600, 40, 150, 40, 0.2, 800, 20, 800, 3, 800000)
+        }
+        return ship_stats.get(self.ship_class, ship_stats[ShipClass.CORVETTE])
+    
+    def get_effective_stats(self):
+        base = self.stats
+        condition_mod = self.condition
+        crew_mod = min(1.2, len(self.assigned_crew) / (base.crew_capacity * 0.5)) if base.crew_capacity > 0 else 1.0
+        
+        return {
+            'health': int(base.max_health * condition_mod),
+            'speed': base.speed * condition_mod * crew_mod,
+            'cargo': int(base.cargo_capacity * condition_mod),
+            'combat_rating': (base.armor + base.shield_strength) * condition_mod * crew_mod
+        }
+
+class FleetManager:
+    def __init__(self):
+        self.flagship = None
+        self.fleet = []
+        self.max_fleet_size = 8
+        self.fleet_reputation = 0
+        
+    def add_ship(self, ship):
+        if len(self.fleet) < self.max_fleet_size:
+            self.fleet.append(ship)
+            return True
+        return False
+    
+    def get_fleet_combat_strength(self):
+        total_strength = 0
+        for ship in self.fleet:
+            if ship.role in ['combat', 'escort', 'patrol']:
+                stats = ship.get_effective_stats()
+                total_strength += stats['combat_rating']
+        return total_strength
+    
+    def update_fleet_positions(self, flagship_pos):
+        for i, ship in enumerate(self.fleet):
+            angle = (i / len(self.fleet)) * 2 * math.pi if len(self.fleet) > 0 else 0
+            distance = 20 + (i % 3) * 10
+            offset_x = math.cos(angle) * distance
+            offset_z = math.sin(angle) * distance
+            ship.position = flagship_pos + Vec3(offset_x, 0, offset_z)
+
+class TreasureType(Enum):
+    ANCIENT_ARTIFACT = "ANCIENT_ARTIFACT"
+    ALIEN_TECHNOLOGY = "ALIEN_TECHNOLOGY"
+    SHIP_WRECKAGE = "SHIP_WRECKAGE"
+    DATA_CACHE = "DATA_CACHE"
+    MINERAL_DEPOSIT = "MINERAL_DEPOSIT"
+    LOST_CARGO = "LOST_CARGO"
+
+@dataclass
+class TreasureSite:
+    position: Vec3
+    treasure_type: TreasureType
+    difficulty: int
+    discovered: bool
+    estimated_value: int
+    description: str
+
+class TreasureHuntingSystem:
+    def __init__(self):
+        self.treasure_sites = []
+        self.scanning_range = 15.0
+        self.generate_treasure_sites()
+        
+    def generate_treasure_sites(self):
+        for _ in range(15):
+            site = TreasureSite(
+                position=Vec3(random.randint(-400, 400), 0, random.randint(-400, 400)),
+                treasure_type=random.choice(list(TreasureType)),
+                difficulty=random.randint(1, 5),
+                discovered=False,
+                estimated_value=random.randint(10000, 200000),
+                description="Mysterious signal detected"
+            )
+            self.treasure_sites.append(site)
+            
+    def scan_for_treasures(self, player_position):
+        found_treasures = []
+        for site in self.treasure_sites:
+            distance = (site.position - player_position).length()
+            if distance <= self.scanning_range and not site.discovered:
+                if random.random() < 0.2:  # 20% chance
+                    found_treasures.append(site)
+                    print(f"📡 Treasure detected! {site.treasure_type.value} at {site.position}")
+        return found_treasures
+    
+    def excavate_treasure(self, site):
+        if site.discovered:
+            return None
+            
+        excavation_roll = random.randint(1, 20)
+        if excavation_roll >= (10 + site.difficulty):
+            site.discovered = True
+            treasure_value = int(site.estimated_value * random.uniform(0.8, 1.2))
+            print(f"💎 Treasure found! {site.treasure_type.value} worth {treasure_value} credits!")
+            return treasure_value
+        else:
+            print(f"❌ Excavation failed. Try again later.")
+            return None
+
+class AssaultType(Enum):
+    ORBITAL_BOMBARDMENT = "ORBITAL_BOMBARDMENT"
+    SURGICAL_STRIKE = "SURGICAL_STRIKE"
+    BLOCKADE = "BLOCKADE"
+
+class OrbitalCombatSystem:
+    def __init__(self):
+        self.bombardment_active = False
+        
+    def initiate_orbital_assault(self, planet_name, assault_type, fleet_strength):
+        print(f"🚀 Initiating {assault_type.value} on {planet_name}")
+        
+        # Calculate success based on fleet strength
+        base_chance = 0.6
+        strength_bonus = min(0.3, fleet_strength / 1000)
+        success_chance = base_chance + strength_bonus
+        
+        if random.random() < success_chance:
+            if assault_type == AssaultType.ORBITAL_BOMBARDMENT:
+                credits_gained = random.randint(50000, 200000)
+                reputation_loss = -25  # Major war crime
+                print(f"💥 Bombardment successful! Gained {credits_gained} credits.")
+                print(f"⚠️ WARNING: Massive reputation loss (-25) with all factions!")
+                return {'success': True, 'credits': credits_gained, 'reputation': reputation_loss}
+            elif assault_type == AssaultType.SURGICAL_STRIKE:
+                credits_gained = random.randint(20000, 80000)
+                reputation_loss = -10
+                print(f"🎯 Surgical strike successful! Gained {credits_gained} credits.")
+                return {'success': True, 'credits': credits_gained, 'reputation': reputation_loss}
+        else:
+            print(f"❌ Assault failed! Fleet took casualties.")
+            return {'success': False, 'fleet_damage': random.randint(10, 30)}
+
+class PersonalSkill(Enum):
+    PILOTING = "PILOTING"
+    COMBAT = "COMBAT"
+    LEADERSHIP = "LEADERSHIP"
+    ENGINEERING = "ENGINEERING"
+    TRADING = "TRADING"
+    DIPLOMACY = "DIPLOMACY"
+
+class CharacterDevelopment:
+    def __init__(self):
+        self.age = 25
+        self.skills = {skill: random.randint(3, 7) for skill in PersonalSkill}
+        self.experience_points = {skill: 0 for skill in PersonalSkill}
+        self.legendary_achievements = []
+        self.years_active = 0
+        
+    def gain_experience(self, skill_type, amount):
+        if skill_type in self.experience_points:
+            # Implement skill cap at 100 to prevent overflow
+            if self.skills[skill_type] >= 100.0:
+                return  # Already at maximum skill level
+                
+            self.experience_points[skill_type] += amount
+            required_exp = int(self.skills[skill_type] * 100)
+            if self.experience_points[skill_type] >= required_exp:
+                self.skills[skill_type] = min(100.0, self.skills[skill_type] + 0.5)
+                self.experience_points[skill_type] = 0
+                
+                if self.skills[skill_type] < 100.0:
+                    print(f"📈 {skill_type.value} skill improved to {self.skills[skill_type]:.1f}!")
+                else:
+                    print(f"🎯 {skill_type.value} skill mastered at maximum level (100.0)!")
+                
+    def advance_time(self, days):
+        years_passed = days / 365.0
+        old_age = self.age
+        self.age += years_passed
+        self.years_active += years_passed
+        
+        if int(old_age) != int(self.age):
+            print(f"🎂 Another year passes. You are now {int(self.age)} years old.")
+
+class BoardingAction(Enum):
+    BREACH_AND_CLEAR = "BREACH_AND_CLEAR"
+    STEALTH_INFILTRATION = "STEALTH_INFILTRATION"
+    NEGOTIATED_SURRENDER = "NEGOTIATED_SURRENDER"
+
+class ShipBoardingSystem:
+    def __init__(self):
+        self.boarding_active = False
+        
+    def initiate_boarding(self, target_ship_type, boarding_action):
+        print(f"🚀 Initiating boarding: {boarding_action.value}")
+        
+        success_chances = {
+            BoardingAction.BREACH_AND_CLEAR: 0.7,
+            BoardingAction.STEALTH_INFILTRATION: 0.5,
+            BoardingAction.NEGOTIATED_SURRENDER: 0.4
+        }
+        
+        if random.random() < success_chances[boarding_action]:
+            cargo_value = random.randint(15000, 80000)
+            ship_condition = random.uniform(0.6, 1.0)
+            
+            print(f"✅ Boarding successful! Captured {cargo_value} credits worth of cargo.")
+            print(f"Ship condition: {ship_condition*100:.0f}%")
+            
+            if ship_condition > 0.7:
+                # Offer to add ship to fleet
+                ship_class = random.choice(list(ShipClass))
+                captured_ship = CapturedShip(ship_class, condition=ship_condition)
+                print(f"💡 {ship_class.value} captured! Consider adding to fleet.")
+                return {'success': True, 'cargo': cargo_value, 'ship': captured_ship}
+            else:
+                return {'success': True, 'cargo': cargo_value, 'ship': None}
+        else:
+            print(f"❌ Boarding failed!")
+            return {'success': False}
+
+# ===== ENHANCED FEATURES INTEGRATION =====
+
+class EnhancedPiratesFeatures:
+    def __init__(self):
+        self.fleet_manager = FleetManager()
+        self.treasure_hunting = TreasureHuntingSystem()
+        self.orbital_combat = OrbitalCombatSystem()
+        self.character_development = CharacterDevelopment()
+        self.ship_boarding = ShipBoardingSystem()
+        
+        print("🚀 Enhanced Pirates! features loaded!")
+        print("   Fleet Management, Treasure Hunting, Orbital Combat, Character Development")
+    
+    def update(self, dt, player_position, current_time):
+        # Update character aging (convert seconds to days)
+        self.character_development.advance_time(dt / 86400.0)
+        
+        # Update fleet positions
+        if self.fleet_manager.fleet:
+            self.fleet_manager.update_fleet_positions(player_position)
+            
+        # Random treasure scanning
+        if random.random() < 0.005:  # 0.5% chance per update
+            treasures = self.treasure_hunting.scan_for_treasures(player_position)
+
 # Trading and Economy System
 class Commodity:
     def __init__(self, name, base_price, category="general"):
@@ -25,7 +317,7 @@ class Commodity:
         self.category = category
         
     def get_price(self, planet_type="generic", supply_demand_modifier=1.0):
-        """Calculate price based on planet type and market conditions"""
+        """Calculate price based on planet type and market conditions - allows crashes and booms"""
         price_modifiers = {
             "agricultural": {"food": 0.7, "technology": 1.3, "minerals": 1.1, "luxury": 1.2},
             "industrial": {"minerals": 0.8, "technology": 0.9, "food": 1.4, "luxury": 1.1},
@@ -40,8 +332,12 @@ class Commodity:
         }
         
         modifier = price_modifiers.get(planet_type, {}).get(self.category, 1.0)
+        
+        # Allow full price volatility - crashes and booms are realistic!
         final_price = self.base_price * modifier * supply_demand_modifier
-        return max(1, int(final_price))  # Minimum price of 1 credit
+        
+        # Only prevent technical issues (negative/zero prices), not economic ones
+        return max(1, int(final_price))
 
 class CargoSystem:
     def __init__(self, max_capacity=100):
@@ -150,9 +446,9 @@ class PlanetEconomy:
                 self.stockpiles[commodity] = 0
                 
     def daily_economic_update(self):
-        """Process daily production, consumption, and trade effects"""
+        """Process daily production, consumption, and trade effects - realistic economics"""
         
-        # 1. PRODUCTION PHASE
+        # 1. PRODUCTION PHASE - Only what the planet actually produces
         for commodity, amount in self.daily_production.items():
             production = amount
             
@@ -160,40 +456,134 @@ class PlanetEconomy:
             if self.blockaded:
                 production = int(production * (0.5 - min(0.4, self.blockade_days * 0.05)))
                 
-            self.stockpiles[commodity] += production
+            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0) + production
             
-        # 2. CONSUMPTION PHASE
+        # 2. CONSUMPTION PHASE - Realistic rationing when supplies are low
         for commodity, amount in self.daily_consumption.items():
-            consumption = amount
+            current_stock = self.stockpiles.get(commodity, 0)
             
-            # Starvation effects - increase consumption of scarce goods
-            if self.stockpiles[commodity] < consumption * 3:  # Less than 3 days supply
-                consumption = int(consumption * 1.2)  # Panic buying
+            # Calculate actual consumption based on availability
+            if current_stock >= amount:
+                # Normal consumption when supplies are adequate
+                actual_consumption = amount
+            elif current_stock > 0:
+                # Rationing when supplies are limited - use what's available
+                actual_consumption = current_stock
+                shortage_ratio = actual_consumption / amount if amount > 0 else 0
                 
-            # Can't consume more than available
-            actual_consumption = min(consumption, self.stockpiles[commodity])
-            self.stockpiles[commodity] -= actual_consumption
-            
-            # Track shortages for realistic pricing
-            if actual_consumption < consumption:
-                if consumption > 0:  # Prevent division by zero
-                    shortage_ratio = actual_consumption / consumption
-                    print(f"{self.planet_name} experiencing {commodity} shortage! ({shortage_ratio:.1%} of needs met)")
-                else:
-                    print(f"{self.planet_name} experiencing {commodity} shortage! (No consumption data)")
+                # Only print shortage messages for severe shortages to avoid spam
+                if shortage_ratio < 0.3:  # Less than 30% of needs met
+                    print(f"⚠️ {self.planet_name}: Critical {commodity} shortage! ({shortage_ratio:.1%} needs met)")
+            else:
+                # No supply available
+                actual_consumption = 0
+                print(f"🚨 {self.planet_name}: Complete {commodity} shortage!")
                 
-        # 3. BLOCKADE EFFECTS
+            # Update stockpiles - can go to zero naturally
+            self.stockpiles[commodity] = max(0, current_stock - actual_consumption)
+                
+        # 3. BLOCKADE EFFECTS - Realistic waste and disruption
         if self.blockaded:
             self.blockade_days += 1
-            # Increased consumption due to hoarding and waste
+            # Blockades cause waste through disrupted logistics
             for commodity in self.stockpiles:
-                waste = int(self.stockpiles[commodity] * 0.02)  # 2% daily waste during blockade
-                self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - waste)
+                if self.stockpiles[commodity] > 0:
+                    waste = max(1, int(self.stockpiles[commodity] * 0.02))  # 2% daily waste
+                    self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - waste)
         else:
             self.blockade_days = 0
             
-        # 4. RESET DAILY TRADE TRACKING
+        # 4. MARKET RESPONSE TO SHORTAGES - Increased trading activity, not free resources
+        self.urgent_needs = []
+        for commodity, amount in self.daily_consumption.items():
+            current_stock = self.stockpiles.get(commodity, 0)
+            days_remaining = current_stock / amount if amount > 0 else float('inf')
+            
+            if days_remaining < 5:  # Less than 5 days supply
+                urgency = "CRITICAL" if days_remaining < 1 else "HIGH"
+                self.urgent_needs.append({
+                    'commodity': commodity,
+                    'days_remaining': days_remaining,
+                    'urgency': urgency,
+                    'max_price_willing': self.get_buy_price(commodity) * (3 if urgency == "CRITICAL" else 2)
+                })
+        
+        # 5. LOGICAL SECURITY RESPONSE - Wealthy planets invest in defense
+        self.assess_security_needs()
+            
+        # 6. RESET DAILY TRADE TRACKING
         self.trade_volume_today = {}
+        
+    def assess_security_needs(self):
+        """LOGICAL: Wealthy planets should invest more in security"""
+        # Calculate planetary wealth
+        total_stockpile_value = 0
+        for commodity, quantity in self.stockpiles.items():
+            if quantity > 0:
+                base_prices = {"food": 10, "technology": 50, "minerals": 25, "luxury_goods": 75, 
+                              "medicine": 40, "weapons": 60, "fuel": 15, "spices": 35}
+                base_price = base_prices.get(commodity, 20)
+                total_stockpile_value += quantity * base_price
+        
+        # Calculate trade volume (wealth generation)
+        daily_trade_value = sum(self.trade_volume_today.values()) * 50  # Estimate value
+        
+        # Total wealth assessment
+        wealth_level = total_stockpile_value + (daily_trade_value * 30)  # 30 days of trade
+        
+        # LOGICAL RESPONSE: Rich planets hire protection
+        if wealth_level > 500000:  # Very wealthy
+            if random.random() < 0.4:  # 40% chance daily
+                self.hire_security("HIGH", wealth_level)
+        elif wealth_level > 200000:  # Moderately wealthy  
+            if random.random() < 0.2:  # 20% chance daily
+                self.hire_security("MEDIUM", wealth_level)
+        elif wealth_level > 50000:   # Some wealth
+            if random.random() < 0.1:  # 10% chance daily
+                self.hire_security("LOW", wealth_level)
+                
+        # ALSO: Respond to recent pirate activity
+        if hasattr(self, 'recent_attacks') and self.recent_attacks > 0:
+            if random.random() < 0.6:  # 60% chance after attack
+                self.hire_security("EMERGENCY", wealth_level)
+                self.recent_attacks = max(0, self.recent_attacks - 1)  # Decay over time
+                
+    def hire_security(self, security_level, wealth):
+        """Hire security forces based on wealth"""
+        security_costs = {
+            "LOW": wealth * 0.02,      # 2% of wealth
+            "MEDIUM": wealth * 0.05,   # 5% of wealth  
+            "HIGH": wealth * 0.08,     # 8% of wealth
+            "EMERGENCY": wealth * 0.12  # 12% of wealth
+        }
+        
+        cost = int(security_costs[security_level])
+        
+        # Wealthy planets can afford security
+        if wealth > cost * 10:  # Only if cost is <10% of wealth
+            # Reduce stockpiles to pay for security (convert wealth to protection)
+            # This is a logical trade-off
+            security_commodities = ["weapons", "technology", "fuel"]
+            for commodity in security_commodities:
+                if commodity in self.stockpiles and self.stockpiles[commodity] > 10:
+                    reduction = min(cost // 100, self.stockpiles[commodity] // 2)
+                    self.stockpiles[commodity] -= reduction
+                    cost -= reduction * 50  # Rough value conversion
+                    if cost <= 0:
+                        break
+            
+            if not hasattr(self, 'security_level'):
+                self.security_level = 0
+            self.security_level = min(100, self.security_level + (20 if security_level == "HIGH" else 10))
+            
+            print(f"🛡️ {self.planet_name} hired {security_level} security (Level: {self.security_level})")
+            
+    def record_pirate_attack(self):
+        """Record when planet is attacked by pirates"""
+        if not hasattr(self, 'recent_attacks'):
+            self.recent_attacks = 0
+        self.recent_attacks += 1
+        print(f"⚠️ {self.planet_name} records pirate attack! (Recent attacks: {self.recent_attacks})")
         
     def get_available_supply(self, commodity):
         """How much of this commodity can be purchased"""
@@ -206,49 +596,63 @@ class PlanetEconomy:
         return max(0, stockpile - strategic_reserve)
         
     def get_buy_price(self, commodity):
-        """Calculate realistic buy price based on supply/demand"""
+        """Calculate buy price with realistic market volatility - allows crashes and booms"""
         base_commodity = market_system.commodities.get(commodity)
         if not base_commodity:
             return 0
             
         base_price = base_commodity.base_price
         
-        # Supply factor
+        # Supply factor - dramatic price swings for shortages
         available = self.get_available_supply(commodity)
         consumption = self.daily_consumption.get(commodity, 1)
         
         if available <= 0:
-            supply_factor = 5.0  # Extreme scarcity
-        elif available < consumption * 5:  # Less than 5 days supply
-            if consumption > 0:  # Prevent division by zero
-                supply_factor = 2.0 + (5 - available/consumption) * 0.5
+            supply_factor = 20.0  # Extreme crisis pricing
+        elif available < consumption:  # Less than 1 day supply
+            if consumption > 0:
+                days_left = available / consumption
+                supply_factor = 10.0 + (1.0 - days_left) * 10.0  # 10x to 20x price
             else:
-                supply_factor = 5.0  # Treat as extreme scarcity
-        elif available < consumption * 15:  # Less than 15 days supply
-            if consumption > 0:  # Prevent division by zero
-                supply_factor = 1.0 + (15 - available/consumption) * 0.1
+                supply_factor = 15.0
+        elif available < consumption * 3:  # Less than 3 days supply
+            if consumption > 0:
+                days_left = available / consumption
+                supply_factor = 3.0 + (3.0 - days_left) * 2.0  # 3x to 9x price
             else:
-                supply_factor = 1.0  # Default supply factor
+                supply_factor = 5.0
+        elif available < consumption * 10:  # Less than 10 days supply
+            if consumption > 0:
+                days_left = available / consumption
+                supply_factor = 1.5 + (10.0 - days_left) * 0.15  # 1.5x to 2.5x price
+            else:
+                supply_factor = 2.0
+        elif available > consumption * 50:  # More than 50 days supply
+            supply_factor = 0.3  # Market crash - oversupply
         else:
-            supply_factor = 0.8  # Abundant supply
+            supply_factor = 1.0  # Normal market
             
-        # Demand factor (production surplus = lower prices)
+        # Demand factor (production surplus = market crash)
         production = self.daily_production.get(commodity, 0)
-        if production > consumption:
-            demand_factor = 0.7  # Surplus = cheap
+        if production > consumption * 2:
+            demand_factor = 0.2  # Massive oversupply crash
+        elif production > consumption:
+            demand_factor = 0.5  # Oversupply
+        elif production < consumption * 0.5:
+            demand_factor = 2.0  # High demand
         else:
-            demand_factor = 1.2  # Deficit = expensive
+            demand_factor = 1.0  # Balanced
             
-        # Blockade factor
-        blockade_factor = 1.0 + (self.blockade_days * 0.1) if self.blockaded else 1.0
+        # Blockade factor - dramatic price increases
+        blockade_factor = 1.0 + (self.blockade_days * 0.2) if self.blockaded else 1.0
         
-        # Planet type modifier
+        # Planet type modifier - specialization matters
         planet_modifiers = {
-            "agricultural": {"food": 0.6, "technology": 1.4, "minerals": 1.2, "luxury_goods": 1.3},
-            "industrial": {"minerals": 0.8, "technology": 0.7, "food": 1.5, "weapons": 0.8},
-            "mining": {"minerals": 0.5, "fuel": 0.6, "technology": 1.6, "food": 1.4},
-            "tech": {"technology": 0.6, "medicine": 0.7, "minerals": 1.3, "food": 1.3},
-            "luxury": {"luxury_goods": 0.7, "spices": 0.6, "food": 1.2, "technology": 1.2}
+            "agricultural": {"food": 0.4, "technology": 2.0, "minerals": 1.5, "luxury_goods": 1.8},
+            "industrial": {"minerals": 0.6, "technology": 0.5, "food": 2.5, "weapons": 0.6},
+            "mining": {"minerals": 0.3, "fuel": 0.4, "technology": 2.5, "food": 2.0},
+            "tech": {"technology": 0.4, "medicine": 0.5, "minerals": 1.8, "food": 1.8},
+            "luxury": {"luxury_goods": 0.5, "spices": 0.4, "food": 1.5, "technology": 1.5}
         }
         
         planet_factor = planet_modifiers.get(self.planet_type, {}).get(
@@ -258,19 +662,37 @@ class PlanetEconomy:
         return max(1, int(final_price))
         
     def get_sell_price(self, commodity):
-        """Price planet pays when buying from player"""
+        """Price planet pays when buying from player - dramatic swings based on need"""
         buy_price = self.get_buy_price(commodity)
         
-        # Higher demand = better sell prices
+        # Calculate urgency of need
         available = self.get_available_supply(commodity)
         consumption = self.daily_consumption.get(commodity, 1)
         
         if available <= 0:
-            sell_ratio = 0.95  # Desperate for supplies
-        elif available < consumption * 3:
-            sell_ratio = 0.85  # High demand
+            sell_ratio = 0.98  # Desperate - pay almost full market price
+        elif available < consumption:  # Less than 1 day supply
+            sell_ratio = 0.95  # Critical need
+        elif available < consumption * 3:  # Less than 3 days supply
+            sell_ratio = 0.90  # High demand
+        elif available < consumption * 10:  # Less than 10 days supply
+            sell_ratio = 0.85  # Moderate demand
         else:
-            sell_ratio = 0.75  # Normal demand
+            # Check if planet actually needs this commodity
+            if commodity in self.daily_consumption and self.daily_consumption[commodity] > 0:
+                sell_ratio = 0.75  # Normal demand
+            else:
+                sell_ratio = 0.40  # Low demand - planet doesn't really need this
+            
+        # Bonus for urgent needs
+        if hasattr(self, 'urgent_needs'):
+            for need in self.urgent_needs:
+                if need['commodity'] == commodity:
+                    if need['urgency'] == "CRITICAL":
+                        sell_ratio = min(0.99, sell_ratio + 0.10)  # Desperation bonus
+                    else:
+                        sell_ratio = min(0.95, sell_ratio + 0.05)  # Urgency bonus
+                    break
             
         return max(1, int(buy_price * sell_ratio))
         
@@ -528,13 +950,19 @@ class EnhancedCrewMember:
         return max(0, base_skill * (1 - fatigue_penalty - health_penalty))
         
     def gain_experience(self, skill_type, amount):
-        """Gain experience in a skill"""
+        """Gain experience in a skill with cap"""
         self.experience += amount
         if skill_type in self.skills:
-            # Chance to improve skill
+            # Chance to improve skill with better cap
             if random.random() < 0.1:  # 10% chance
-                self.skills[skill_type] = min(20, self.skills[skill_type] + 1)
-                print(f"{self.name} improved their {skill_type} skill!")
+                old_skill = self.skills[skill_type]
+                self.skills[skill_type] = min(50, self.skills[skill_type] + 1)  # Cap at 50 for crew
+                
+                if self.skills[skill_type] > old_skill:
+                    if self.skills[skill_type] < 50:
+                        print(f"{self.name} improved their {skill_type} skill to {self.skills[skill_type]}!")
+                    else:
+                        print(f"{self.name} has mastered {skill_type} at maximum level!")
 
 class RealisticShipSystems:
     def __init__(self):
@@ -1817,6 +2245,14 @@ dynamic_contracts = DynamicContractSystem()
 class MessageType(Enum):
     GOODS_REQUEST = "GOODS_REQUEST"
     PAYMENT = "PAYMENT"
+    WAR_DECLARATION = "WAR_DECLARATION"
+    PEACE_TREATY = "PEACE_TREATY"
+    MILITARY_ORDERS = "MILITARY_ORDERS"
+    TRADE_AGREEMENT = "TRADE_AGREEMENT"
+    PIRATE_WARNING = "PIRATE_WARNING"
+    NEWS_BULLETIN = "NEWS_BULLETIN"
+    DIPLOMATIC_LETTER = "DIPLOMATIC_LETTER"
+    INTELLIGENCE_REPORT = "INTELLIGENCE_REPORT"
 
 class UrgencyLevel(Enum):
     LOW = "LOW"
@@ -1850,11 +2286,331 @@ class CargoIntelligence:
     route_danger: float
     intel_timestamp: float
 
+@dataclass
+class PhysicalLetter:
+    """Physical letter that must be delivered by ship"""
+    letter_id: str
+    message_type: MessageType
+    sender_faction: str
+    sender_planet: str
+    recipient_faction: str
+    recipient_planet: str
+    subject: str
+    content: str
+    timestamp: float
+    urgency: UrgencyLevel
+    requires_response: bool = False
+    
+@dataclass 
+class PlanetaryNews:
+    """Information known at a specific planet"""
+    news_id: str
+    headline: str
+    details: str
+    source_planet: str
+    timestamp: float
+    reliability: float  # 0.0 to 1.0 - how accurate the news is
+    spread_count: int   # How many times it's been passed along
+    
+@dataclass
+class WordOfMouthInfo:
+    """Information that spreads through word-of-mouth"""
+    info_id: str
+    info_type: str  # "war", "pirate_attack", "trade_opportunity", etc.
+    content: str
+    origin_planet: str
+    current_accuracy: float  # Degrades as it spreads
+    age_hours: float
+    visited_planets: set
+
+class PhysicalCommunicationSystem:
+    """Handles all physical communication - letters, word-of-mouth, news spreading"""
+    
+    def __init__(self):
+        self.active_letters = []  # Letters being delivered by ships
+        self.planetary_mailboxes = {}  # Planet -> list of received letters
+        self.planetary_news = {}  # Planet -> list of news/rumors known
+        self.word_of_mouth_pool = []  # Active rumors spreading
+        self.letter_counter = 0
+        
+    def send_letter(self, sender_planet, recipient_planet, letter_type, subject, content, urgency=UrgencyLevel.NORMAL, sender_faction="", recipient_faction=""):
+        """Send a physical letter via message ship"""
+        self.letter_counter += 1
+        
+        letter = PhysicalLetter(
+            letter_id=f"LETTER-{self.letter_counter}",
+            message_type=letter_type,
+            sender_faction=sender_faction,
+            sender_planet=getattr(sender_planet, 'name', str(sender_planet)),
+            recipient_faction=recipient_faction,
+            recipient_planet=getattr(recipient_planet, 'name', str(recipient_planet)),
+            subject=subject,
+            content=content,
+            timestamp=time.time(),
+            urgency=urgency,
+            requires_response=(letter_type in [MessageType.WAR_DECLARATION, MessageType.PEACE_TREATY, MessageType.DIPLOMATIC_LETTER])
+        )
+        
+        # Create message ship to deliver the letter
+        message_ship = MessageShip(sender_planet, recipient_planet, letter_type, letter)
+        unified_transport_system.message_ships.append(message_ship)
+        
+        print(f"📨 {letter_type.value} sent: {sender_planet.name} → {recipient_planet.name}")
+        print(f"   Subject: {subject}")
+        
+        return letter
+        
+    def declare_war(self, declaring_faction, target_faction, declaration_text):
+        """PHYSICAL WAR DECLARATION - must send letters to all faction planets"""
+        print(f"⚔️ {declaring_faction} DECLARES WAR on {target_faction}!")
+        print(f"📜 War declaration: {declaration_text}")
+        
+        # Find faction home planets and send physical letters
+        faction_planets = self.find_faction_planets(target_faction)
+        faction_leader_planet = self.find_faction_capital(declaring_faction)
+        
+        if not faction_leader_planet:
+            print(f"❌ Cannot declare war - {declaring_faction} has no capital planet!")
+            return False
+            
+        letters_sent = 0
+        for planet in faction_planets:
+            war_letter = self.send_letter(
+                sender_planet=faction_leader_planet,
+                recipient_planet=planet,
+                letter_type=MessageType.WAR_DECLARATION,
+                subject=f"DECLARATION OF WAR",
+                content=f"By order of {declaring_faction}, we hereby declare WAR upon {target_faction}. {declaration_text}",
+                urgency=UrgencyLevel.CRITICAL,
+                sender_faction=declaring_faction,
+                recipient_faction=target_faction
+            )
+            letters_sent += 1
+            
+        # Also notify own faction planets
+        own_planets = self.find_faction_planets(declaring_faction)
+        for planet in own_planets:
+            if planet != faction_leader_planet:
+                self.send_letter(
+                    sender_planet=faction_leader_planet,
+                    recipient_planet=planet,
+                    letter_type=MessageType.MILITARY_ORDERS,
+                    subject=f"WAR ORDERS",
+                    content=f"We are now at WAR with {target_faction}. Prepare defenses and military operations.",
+                    urgency=UrgencyLevel.CRITICAL,
+                    sender_faction=declaring_faction,
+                    recipient_faction=declaring_faction
+                )
+                
+        print(f"📫 {letters_sent} war declaration letters dispatched by ship")
+        
+        # Create word-of-mouth rumor
+        self.create_rumor(
+            info_type="war_declaration",
+            content=f"{declaring_faction} has declared war on {target_faction}",
+            origin_planet=faction_leader_planet.name,
+            accuracy=0.9
+        )
+        
+        return True
+        
+    def find_faction_planets(self, faction_name):
+        """Find all planets belonging to a faction"""
+        faction_planets = []
+        for planet in planets:
+            if hasattr(planet, 'faction') and planet.faction == faction_name:
+                faction_planets.append(planet)
+            elif hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
+                # Check planet type for faction association
+                if faction_name.lower() in planet.planet_type.lower():
+                    faction_planets.append(planet)
+        return faction_planets
+        
+    def find_faction_capital(self, faction_name):
+        """Find the capital/leader planet of a faction"""
+        faction_planets = self.find_faction_planets(faction_name)
+        if faction_planets:
+            # Capital is usually the largest/wealthiest planet
+            best_planet = max(faction_planets, key=lambda p: getattr(p.enhanced_economy, 'calculate_total_wealth', lambda: 0)() if hasattr(p, 'enhanced_economy') else 0)
+            return best_planet
+        return None
+        
+    def deliver_letter(self, letter, destination_planet):
+        """Deliver a letter to a planet's mailbox"""
+        planet_name = getattr(destination_planet, 'name', str(destination_planet))
+        
+        if planet_name not in self.planetary_mailboxes:
+            self.planetary_mailboxes[planet_name] = []
+            
+        self.planetary_mailboxes[planet_name].append(letter)
+        
+        print(f"📬 Letter delivered to {planet_name}: {letter.subject}")
+        
+        # Process urgent letters immediately
+        if letter.urgency == UrgencyLevel.CRITICAL:
+            self.process_urgent_letter(letter, destination_planet)
+            
+        # Create word-of-mouth from letter content
+        if letter.message_type in [MessageType.WAR_DECLARATION, MessageType.PIRATE_WARNING]:
+            self.create_rumor(
+                info_type=letter.message_type.value.lower(),
+                content=letter.content,
+                origin_planet=planet_name,
+                accuracy=0.95  # Letters are very accurate
+            )
+            
+    def process_urgent_letter(self, letter, planet):
+        """Process urgent letters that require immediate action"""
+        if letter.message_type == MessageType.WAR_DECLARATION:
+            print(f"🚨 {planet.name} receives WAR DECLARATION from {letter.sender_faction}!")
+            # Planet now knows about the war
+            self.add_planetary_news(
+                planet_name=planet.name,
+                headline=f"WAR DECLARED: {letter.sender_faction} vs {letter.recipient_faction}",
+                details=letter.content,
+                source=letter.sender_planet,
+                reliability=1.0
+            )
+            
+        elif letter.message_type == MessageType.PIRATE_WARNING:
+            print(f"⚠️ {planet.name} receives PIRATE WARNING!")
+            if hasattr(planet, 'enhanced_economy'):
+                planet.enhanced_economy.record_pirate_attack()
+                
+    def create_rumor(self, info_type, content, origin_planet, accuracy=0.8):
+        """Create a word-of-mouth rumor that will spread"""
+        rumor = WordOfMouthInfo(
+            info_id=f"RUMOR-{int(time.time())}-{random.randint(1000, 9999)}",
+            info_type=info_type,
+            content=content,
+            origin_planet=origin_planet,
+            current_accuracy=accuracy,
+            age_hours=0,
+            visited_planets={origin_planet}
+        )
+        
+        self.word_of_mouth_pool.append(rumor)
+        print(f"💬 Rumor started at {origin_planet}: {content[:50]}...")
+        
+    def spread_word_of_mouth(self):
+        """Spread rumors through trader and traveler word-of-mouth"""
+        for rumor in self.word_of_mouth_pool[:]:
+            # Age the rumor
+            rumor.age_hours += 1/60  # Assuming 1 minute = 1 hour game time
+            
+            # Accuracy degrades over time and spreading
+            accuracy_decay = 0.95 ** rumor.spread_count
+            rumor.current_accuracy *= accuracy_decay
+            
+            # Remove very old or inaccurate rumors
+            if rumor.age_hours > 168 or rumor.current_accuracy < 0.3:  # 1 week or <30% accuracy
+                self.word_of_mouth_pool.remove(rumor)
+                continue
+                
+            # Spread to nearby planets through cargo ships
+            self.spread_rumor_via_ships(rumor)
+            
+    def spread_rumor_via_ships(self, rumor):
+        """Spread rumors through cargo ships and travelers"""
+        for ship in unified_transport_system.cargo_ships:
+            if hasattr(ship, 'destination') and hasattr(ship.destination, 'name'):
+                dest_name = ship.destination.name
+                
+                # Ships carry news from their origin
+                if hasattr(ship, 'origin') and ship.origin.name in rumor.visited_planets:
+                    if dest_name not in rumor.visited_planets and random.random() < 0.3:  # 30% chance
+                        rumor.visited_planets.add(dest_name)
+                        rumor.spread_count += 1
+                        
+                        # Add news to destination planet
+                        self.add_planetary_news(
+                            planet_name=dest_name,
+                            headline=f"Traveler's Tale: {rumor.info_type.title()}",
+                            details=rumor.content,
+                            source=f"Trader from {ship.origin.name}",
+                            reliability=rumor.current_accuracy
+                        )
+                        
+                        print(f"💬 Rumor spread to {dest_name} via cargo ship")
+                        
+    def add_planetary_news(self, planet_name, headline, details, source, reliability=0.8):
+        """Add news/information to a planet's knowledge"""
+        if planet_name not in self.planetary_news:
+            self.planetary_news[planet_name] = []
+            
+        news = PlanetaryNews(
+            news_id=f"NEWS-{int(time.time())}-{random.randint(100, 999)}",
+            headline=headline,
+            details=details,
+            source_planet=source,
+            timestamp=time.time(),
+            reliability=reliability,
+            spread_count=0
+        )
+        
+        self.planetary_news[planet_name].append(news)
+        
+    def get_planet_knowledge(self, planet_name):
+        """Get all information (letters + news) known at a planet"""
+        letters = self.planetary_mailboxes.get(planet_name, [])
+        news = self.planetary_news.get(planet_name, [])
+        
+        return {
+            'letters': letters,
+            'news': news,
+            'total_items': len(letters) + len(news)
+        }
+        
+    def player_visits_planet(self, planet_name):
+        """When player visits a planet, they learn local news and can spread rumors"""
+        knowledge = self.get_planet_knowledge(planet_name)
+        
+        if knowledge['total_items'] > 0:
+            print(f"📰 Local news and letters at {planet_name}:")
+            
+            # Show recent letters (if any)
+            for letter in knowledge['letters'][-3:]:  # Last 3 letters
+                age_hours = (time.time() - letter.timestamp) / 3600
+                print(f"   📨 {letter.subject} (from {letter.sender_planet}, {age_hours:.1f}h ago)")
+                
+            # Show recent news
+            for news in knowledge['news'][-3:]:  # Last 3 news items
+                age_hours = (time.time() - news.timestamp) / 3600
+                accuracy_str = f"{news.reliability:.0%} reliable" if news.reliability < 0.9 else "confirmed"
+                print(f"   📰 {news.headline} ({accuracy_str}, {age_hours:.1f}h ago)")
+                
+        # Player can now spread this information to other planets they visit
+        return knowledge
+        
+    def update(self):
+        """Update the physical communication system"""
+        self.spread_word_of_mouth()
+        
+        # Clean up old letters and news
+        current_time = time.time()
+        for planet_name in list(self.planetary_mailboxes.keys()):
+            # Keep letters for 30 days
+            self.planetary_mailboxes[planet_name] = [
+                letter for letter in self.planetary_mailboxes[planet_name]
+                if current_time - letter.timestamp < 2592000  # 30 days
+            ]
+            
+        for planet_name in list(self.planetary_news.keys()):
+            # Keep news for 14 days
+            self.planetary_news[planet_name] = [
+                news for news in self.planetary_news[planet_name]
+                if current_time - news.timestamp < 1209600  # 14 days
+            ]
+
 # Global systems
 market_system = MarketSystem()
 player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
+physical_communication = PhysicalCommunicationSystem()
 player_wallet = PlayerWallet(starting_credits=500)
 ship_systems = RealisticShipSystems()
+
+# Initialize enhanced Pirates! features
+enhanced_features = EnhancedPiratesFeatures()
 
 # Create a rotating skybox instead of stars
 class RotatingSkybox(Entity):
@@ -2897,7 +3653,7 @@ class TransportShip(Entity):
         destroy(self)
 
 class MessageShip(TransportShip):
-    """Ship carrying messages between planets"""
+    """Ship carrying physical letters between planets"""
     
     def __init__(self, origin_planet, destination_planet, message_type, payload):
         super().__init__(
@@ -2909,17 +3665,29 @@ class MessageShip(TransportShip):
         )
         
         self.message_type = message_type
-        self.payload = payload
-        self.speed = 15.0
+        self.payload = payload  # Should be a PhysicalLetter object
+        self.speed = 15.0  # Faster than cargo ships for urgent messages
         
-        print(f"📨 Message ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
+        # Display letter type
+        if isinstance(payload, PhysicalLetter):
+            print(f"📨 Letter courier launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
+            print(f"   📜 Carrying: {payload.subject}")
+        else:
+            print(f"📨 Message ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
         
     def on_arrival(self):
-        """Deliver message to destination"""
-        if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
-            self.destination.enhanced_economy.receive_message(self.message_type, self.payload)
+        """Deliver letter to destination planet's mailbox"""
+        destination_name = getattr(self.destination, 'name', 'Unknown')
+        
+        # Handle physical letters through the communication system
+        if isinstance(self.payload, PhysicalLetter):
+            physical_communication.deliver_letter(self.payload, self.destination)
+        else:
+            # Fallback for old message types
+            if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
+                self.destination.enhanced_economy.receive_message(self.message_type, self.payload)
+            print(f"📬 Message delivered to {destination_name}")
             
-        print(f"📬 Message delivered to {getattr(self.destination, 'name', 'Unknown')}")
         super().on_arrival()
 
 class CargoShip(TransportShip):
@@ -3101,6 +3869,13 @@ class PirateRaider(TransportShip):
             print(f"💀 Pirate raid successful! Stolen: {cargo_ship.get_cargo_description()}")
             print(f"   Value: {stolen_value} credits")
             
+            # LOGICAL CORRECTION: Notify destination planet of attack
+            if hasattr(cargo_ship, 'destination') and hasattr(cargo_ship.destination, 'enhanced_economy'):
+                cargo_ship.destination.enhanced_economy.record_pirate_attack()
+                
+            # LOGICAL CORRECTION: Increase regional pirate threat
+            self.increase_regional_threat(cargo_ship)
+            
             # Remove the cargo ship
             if 'unified_transport_system' in globals() and cargo_ship in unified_transport_system.cargo_ships:
                 unified_transport_system.cargo_ships.remove(cargo_ship)
@@ -3114,7 +3889,42 @@ class PirateRaider(TransportShip):
             
         else:
             print(f"⚔️ Cargo ship fought off pirate attack!")
+            # Even failed attacks increase threat
+            if hasattr(cargo_ship, 'destination') and hasattr(cargo_ship.destination, 'enhanced_economy'):
+                if random.random() < 0.3:  # 30% chance failed attack is reported
+                    cargo_ship.destination.enhanced_economy.record_pirate_attack()
             self.hunting_mode = False
+            
+    def increase_regional_threat(self, cargo_ship):
+        """LOGICAL: Successful pirate attacks increase regional threat"""
+        # PHYSICAL COMMUNICATION: Send warning letters to nearby planets
+        if hasattr(cargo_ship, 'position') and hasattr(cargo_ship, 'destination'):
+            attack_location = cargo_ship.position
+            victim_planet = cargo_ship.destination
+            
+            # Send physical pirate warning letters to nearby planets
+            for planet in planets:
+                if hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
+                    distance = (planet.position - attack_location).length() if hasattr(planet, 'position') else 1000
+                    if distance < 300 and planet != victim_planet:  # Within threat radius, not victim
+                        # Send pirate warning letter
+                        if random.random() < 0.4:  # 40% chance nearby planets send warnings
+                            physical_communication.send_letter(
+                                sender_planet=victim_planet,
+                                recipient_planet=planet,
+                                letter_type=MessageType.PIRATE_WARNING,
+                                subject="PIRATE ATTACK WARNING",
+                                content=f"Pirates attacked cargo ship near {victim_planet.name}. Exercise extreme caution in this sector.",
+                                urgency=UrgencyLevel.URGENT
+                            )
+                            
+            # Create word-of-mouth rumor about the attack
+            physical_communication.create_rumor(
+                info_type="pirate_attack",
+                content=f"Pirates attacked cargo ship bound for {victim_planet.name}",
+                origin_planet=victim_planet.name,
+                accuracy=0.8
+            )
             
     def patrol_movement(self):
         """Random patrol movement when no targets found"""
@@ -3761,7 +4571,7 @@ class EnhancedPlanetEconomy:
         self.auto_start_manufacturing()
             
     def assess_and_send_requests(self):
-        """Assess needs and send procurement messages"""
+        """Assess needs and send procurement messages + LOGICAL ECONOMIC CORRECTIONS"""
         needs = self.calculate_needs()
         
         for commodity, request in needs.items():
@@ -3769,6 +4579,51 @@ class EnhancedPlanetEconomy:
             if commodity not in self.outgoing_requests or time.time() - self.outgoing_requests[commodity] > 120:
                 self.send_procurement_message(request)
                 self.outgoing_requests[commodity] = time.time()
+                
+                # LOGICAL CORRECTION: High prices attract more traders
+                if request.max_price > 100:  # High-value commodity
+                    self.spawn_additional_traders(request)
+                    
+    def spawn_additional_traders(self, high_value_request):
+        """LOGICAL: High prices attract additional independent traders"""
+        # Calculate profit potential
+        base_prices = {"food": 10, "technology": 50, "minerals": 25, "luxury_goods": 75, 
+                      "medicine": 40, "weapons": 60, "fuel": 15, "spices": 35}
+        base_price = base_prices.get(high_value_request.commodity, 20)
+        
+        profit_margin = (high_value_request.max_price - base_price) / base_price if base_price > 0 else 0
+        
+        # More traders attracted by higher profit margins
+        if profit_margin > 2.0:  # 200%+ profit
+            trader_spawn_chance = 0.8
+        elif profit_margin > 1.0:  # 100%+ profit
+            trader_spawn_chance = 0.5
+        elif profit_margin > 0.5:  # 50%+ profit
+            trader_spawn_chance = 0.3
+        else:
+            trader_spawn_chance = 0.1
+            
+        if random.random() < trader_spawn_chance:
+            # Spawn independent trader
+            suppliers = self.find_suppliers(high_value_request.commodity)
+            if suppliers:
+                origin_planet = random.choice(suppliers)
+                quantity = min(high_value_request.quantity, 10)
+                
+                # Create profitable cargo run
+                cargo_ship = CargoShip(
+                    origin_planet=origin_planet,
+                    destination_planet=self.planet_object,
+                    cargo_manifest={high_value_request.commodity: quantity}
+                )
+                cargo_ship.profit_motivated = True  # Mark as profit-seeking
+                cargo_ship.expected_profit = profit_margin * quantity * base_price
+                
+                if 'unified_transport_system' in globals():
+                    unified_transport_system.cargo_ships.append(cargo_ship)
+                    
+                print(f"💰 High prices attract trader: {quantity} {high_value_request.commodity} -> {self.planet_name}")
+                print(f"   Expected profit: {cargo_ship.expected_profit:.0f} credits ({profit_margin:.1%} margin)")
                 
     def calculate_needs(self):
         """Calculate what goods this planet needs"""
@@ -3985,17 +4840,75 @@ class PirateBaseEconomy(EnhancedPlanetEconomy):
             self.last_raid_launch = current_time
             
     def consider_launching_raiders(self):
-        """Decide whether to launch raiders based on needs and intelligence"""
+        """Decide whether to launch raiders - LOGICAL: target wealthy areas and profitable routes"""
+        # 1. TARGET WEALTHY PLANETS - Pirates follow the money!
+        wealthy_targets = self.find_wealthy_targets()
+        
+        # 2. TARGET HIGH-VALUE CARGO ROUTES
+        profitable_routes = self.find_profitable_routes()
+        
+        # 3. CRITICAL NEEDS (secondary motivation)
         critical_needs = []
         for commodity, consumption in self.daily_consumption.items():
             current_stock = self.stockpiles.get(commodity, 0)
             days_remaining = current_stock / consumption if consumption > 0 else float('inf')
-            
             if days_remaining < 20:
                 critical_needs.append(commodity)
+        
+        # LOGICAL RAID DECISION: Wealth > Profit > Needs
+        raid_motivation = 0.0
+        
+        # Wealthy targets are ALWAYS attractive (main motivation)
+        if wealthy_targets:
+            raid_motivation += 0.7  # 70% base chance to raid wealth
+            
+        # Profitable routes attract raids
+        if profitable_routes:
+            raid_motivation += 0.5  # 50% chance for profitable routes
+            
+        # Desperate needs drive raids (but secondary)
+        if critical_needs:
+            raid_motivation += 0.3  # 30% chance for needs
+            
+        # Success breeds more raids
+        if len(self.intelligence_cache) > 3:  # Lots of intel = successful pirates
+            raid_motivation += 0.4  # 40% bonus for successful pirates
+            
+        # Launch raid if motivated
+        if random.random() < min(0.95, raid_motivation):  # Cap at 95%
+            target_data = wealthy_targets + profitable_routes + critical_needs
+            self.launch_raider(target_data)
+            
+    def find_wealthy_targets(self):
+        """Find wealthy planets/cargo worth raiding"""
+        wealthy_targets = []
+        
+        # Check intelligence for high-value cargo
+        for intel in self.intelligence_cache:
+            if intel.estimated_value > 50000:  # High-value cargo
+                wealthy_targets.append(intel.cargo_manifest)
                 
-        if critical_needs or random.random() < 0.4:  # 40% chance of opportunistic raiding
-            self.launch_raider(critical_needs)
+        # TODO: Add logic to identify wealthy planets by trade volume/stockpiles
+        return wealthy_targets
+        
+    def find_profitable_routes(self):
+        """Identify profitable trade routes to target"""
+        profitable_routes = []
+        
+        # Look for repeated high-value routes in intelligence
+        route_values = {}
+        for intel in self.intelligence_cache:
+            route_key = f"{intel.origin_planet}->{intel.destination_planet}"
+            if route_key not in route_values:
+                route_values[route_key] = []
+            route_values[route_key].append(intel.estimated_value)
+            
+        # Find consistently profitable routes
+        for route, values in route_values.items():
+            if len(values) > 1 and sum(values) / len(values) > 30000:  # Avg > 30k
+                profitable_routes.append(values[-1])  # Use latest value
+                
+        return profitable_routes
             
     def launch_raider(self, target_commodities=None):
         """Launch a pirate raider"""
@@ -4997,6 +5910,12 @@ def update():
     # Update time system
     time_system.update()
     
+    # Update physical communication system
+    physical_communication.update()
+    
+    # Update enhanced Pirates! features
+    enhanced_features.update(time.dt, player.position, time.time())
+    
     # Update unified transport system
     unified_transport_system.update()
     
@@ -5033,6 +5952,10 @@ def land_on_planet():
                     mouse.locked = True
                     mouse.visible = False
                     return
+        
+        # PHYSICAL COMMUNICATION: Player learns local news upon landing
+        print(f"\n🚀 Landing on {nearby_planet.name}...")
+        physical_communication.player_visits_planet(nearby_planet.name)
         
         # Set current planet in scene manager
         scene_manager.current_planet = nearby_planet
@@ -5288,6 +6211,201 @@ def input(key):
                 print("🔧 No spare parts available for repairs")
         else:
             print("🔧 All systems operating normally")
+    
+    # ===== ENHANCED PIRATES! FEATURES CONTROLS =====
+    
+    if key == 'v' and not paused:
+        # Fleet Management
+        fleet = enhanced_features.fleet_manager.fleet
+        if fleet:
+            print("\n🚢 FLEET STATUS:")
+            for i, ship in enumerate(fleet):
+                stats = ship.get_effective_stats()
+                print(f"{i+1}. {ship.name} ({ship.ship_class.value})")
+                print(f"   Role: {ship.role} | Condition: {ship.condition*100:.0f}%")
+                print(f"   Combat Rating: {stats['combat_rating']:.0f}")
+            total_strength = enhanced_features.fleet_manager.get_fleet_combat_strength()
+            print(f"\nTotal Fleet Combat Strength: {total_strength:.0f}")
+        else:
+            print("🚢 No ships in fleet. Capture ships through boarding actions!")
+    
+    if key == 'z' and not paused:
+        # Treasure Scanner
+        treasures = enhanced_features.treasure_hunting.scan_for_treasures(player.position)
+        if treasures:
+            print("📡 TREASURE SCANNER ACTIVE")
+        else:
+            print("📡 No treasures detected in range. Fly around to scan more areas!")
+    
+    if key == 'x' and not paused:
+        # Character Profile
+        char = enhanced_features.character_development
+        print(f"\n👤 CHARACTER PROFILE:")
+        print(f"Age: {int(char.age)} years old")
+        print(f"Years Active: {char.years_active:.1f}")
+        print(f"\n📊 SKILLS:")
+        for skill, level in char.skills.items():
+            print(f"  {skill.value}: {level:.1f}")
+        if char.legendary_achievements:
+            print(f"\n🏆 ACHIEVEMENTS:")
+            for achievement in char.legendary_achievements:
+                print(f"  • {achievement['name']} (Age {achievement['age_earned']})")
+    
+    if key == 'o' and not paused:
+        # Orbital Operations Menu
+        if scene_manager.current_state == GameState.SPACE and nearby_planet:
+            fleet_strength = enhanced_features.fleet_manager.get_fleet_combat_strength()
+            print(f"\n🚀 ORBITAL OPERATIONS - {nearby_planet.name}")
+            print(f"Fleet Combat Strength: {fleet_strength:.0f}")
+            print("1. Orbital Bombardment (High damage, major reputation loss)")
+            print("2. Surgical Strike (Precise, moderate reputation loss)")
+            print("3. Establish Blockade (Economic pressure)")
+            print("Press 1-3 to execute, or any other key to cancel")
+        else:
+            print("🚀 Must be near a planet in space to conduct orbital operations!")
+    
+    if key in '123' and not paused:
+        # Execute orbital operations
+        if scene_manager.current_state == GameState.SPACE and nearby_planet:
+            fleet_strength = enhanced_features.fleet_manager.get_fleet_combat_strength()
+            if fleet_strength < 100:
+                print("⚠️ Warning: Fleet strength too low for major operations!")
+                
+            if key == '1':
+                result = enhanced_features.orbital_combat.initiate_orbital_assault(
+                    nearby_planet.name, AssaultType.ORBITAL_BOMBARDMENT, fleet_strength)
+            elif key == '2':
+                result = enhanced_features.orbital_combat.initiate_orbital_assault(
+                    nearby_planet.name, AssaultType.SURGICAL_STRIKE, fleet_strength)
+            elif key == '3':
+                result = enhanced_features.orbital_combat.initiate_orbital_assault(
+                    nearby_planet.name, AssaultType.BLOCKADE, fleet_strength)
+                    
+            if 'result' in locals() and result['success']:
+                player_wallet.earn(result['credits'])
+                if 'reputation' in result:
+                    # Apply reputation changes to all factions
+                    for faction_id in faction_system.factions.keys():
+                        faction_system.change_reputation(faction_id, result['reputation'])
+    
+    if key == 'y' and not paused:
+        # Attempt treasure excavation at current location
+        for site in enhanced_features.treasure_hunting.treasure_sites:
+            distance = (site.position - player.position).length()
+            if distance < 5.0 and not site.discovered:  # Within 5 units
+                skill_level = enhanced_features.character_development.skills[PersonalSkill.ENGINEERING]
+                treasure_value = enhanced_features.treasure_hunting.excavate_treasure(site)
+                if treasure_value:
+                    player_wallet.earn(treasure_value)
+                    enhanced_features.character_development.gain_experience(PersonalSkill.ENGINEERING, 10)
+                break
+        else:
+            print("🔍 No treasure sites within excavation range.")
+    
+    if key == 'l' and not paused:
+        # Simulate boarding action (when encountering ships)
+        if scene_manager.current_state == GameState.SPACE:
+            print("\n⚔️ BOARDING ACTION SIMULATION")
+            print("1. Breach and Clear (High success, moderate damage)")
+            print("2. Stealth Infiltration (Moderate success, minimal damage)")
+            print("3. Negotiated Surrender (Low success, no damage)")
+            print("Press 1-3 to board, or any other key to cancel")
+            
+    if key in '123' and scene_manager.current_state == GameState.SPACE:
+        # Execute boarding action
+        boarding_actions = {
+            '1': BoardingAction.BREACH_AND_CLEAR,
+            '2': BoardingAction.STEALTH_INFILTRATION,
+            '3': BoardingAction.NEGOTIATED_SURRENDER
+        }
+        
+        action = boarding_actions.get(key)
+        if action:
+            result = enhanced_features.ship_boarding.initiate_boarding("Enemy Merchant", action)
+            if result['success']:
+                player_wallet.earn(result['cargo'])
+                enhanced_features.character_development.gain_experience(PersonalSkill.COMBAT, 5)
+                
+                if result.get('ship'):
+                    captured_ship = result['ship']
+                    if enhanced_features.fleet_manager.add_ship(captured_ship):
+                        print(f"🚢 {captured_ship.name} added to your fleet!")
+                    else:
+                        print(f"🚢 Fleet at maximum capacity. {captured_ship.name} abandoned.")
+    
+    if key == 'p' and not paused:
+        # Show enhanced skills and advancement opportunities
+        char = enhanced_features.character_development
+        print(f"\n📈 SKILL ADVANCEMENT:")
+        for skill, level in char.skills.items():
+            exp = char.experience_points[skill]
+            needed = int(level * 100)
+            print(f"  {skill.value}: {level:.1f} ({exp}/{needed} XP)")
+        print(f"\n🎯 Gain experience by:")
+        print(f"  • Trading (Trading skill)")
+        print(f"  • Combat/Boarding (Combat skill)")
+        print(f"  • Treasure hunting (Engineering skill)")
+        print(f"  • Diplomatic missions (Diplomacy skill)")
+        print(f"  • Fleet operations (Leadership skill)")
+        print(f"  • Flying and exploration (Piloting skill)")
+        
+    # TESTING PHYSICAL COMMUNICATION SYSTEM
+    if key == 'w' and not paused:
+        # Test war declaration system
+        print("\n⚔️ TESTING WAR DECLARATION SYSTEM")
+        result = physical_communication.declare_war(
+            declaring_faction="Terran Federation",
+            target_faction="Mars Republic", 
+            declaration_text="Mars Republic has violated trade agreements and territorial boundaries."
+        )
+        if result:
+            print("📜 War declaration letters are being dispatched by courier ships!")
+        else:
+            print("❌ War declaration failed!")
+            
+    if key == 'e' and not paused:
+        # Test letter sending system
+        if len(planets) >= 2:
+            sender = planets[0]
+            recipient = planets[1]
+            physical_communication.send_letter(
+                sender_planet=sender,
+                recipient_planet=recipient,
+                letter_type=MessageType.DIPLOMATIC_LETTER,
+                subject="Trade Proposal",
+                content="We propose a mutual trade agreement for the benefit of both our peoples.",
+                urgency=UrgencyLevel.NORMAL
+            )
+            print(f"📨 Test letter sent from {sender.name} to {recipient.name}")
+        else:
+            print("❌ Need at least 2 planets for letter test!")
+            
+    if key == 'q' and not paused:
+        # Show communication system status
+        print("\n📡 PHYSICAL COMMUNICATION SYSTEM STATUS")
+        print(f"Active Letter Ships: {len(unified_transport_system.message_ships)}")
+        print(f"Active Rumors: {len(physical_communication.word_of_mouth_pool)}")
+        
+        # Show planets with mail/news
+        planets_with_mail = 0
+        planets_with_news = 0
+        for planet_name in physical_communication.planetary_mailboxes:
+            if physical_communication.planetary_mailboxes[planet_name]:
+                planets_with_mail += 1
+        for planet_name in physical_communication.planetary_news:
+            if physical_communication.planetary_news[planet_name]:
+                planets_with_news += 1
+                
+        print(f"Planets with Mail: {planets_with_mail}")
+        print(f"Planets with News/Rumors: {planets_with_news}")
+        
+        if physical_communication.word_of_mouth_pool:
+            print("\n💬 ACTIVE RUMORS:")
+            for rumor in physical_communication.word_of_mouth_pool[:3]:  # Show first 3
+                age_str = f"{rumor.age_hours:.1f}h old"
+                accuracy_str = f"{rumor.current_accuracy:.0%} accurate"
+                spread_str = f"spread to {len(rumor.visited_planets)} planets"
+                print(f"   • {rumor.content[:40]}... ({age_str}, {accuracy_str}, {spread_str})")
         
 def show_economic_info(planet_name):
     """Display detailed economic information about a planet"""
