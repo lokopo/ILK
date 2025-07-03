@@ -317,7 +317,7 @@ class Commodity:
         self.category = category
         
     def get_price(self, planet_type="generic", supply_demand_modifier=1.0):
-        """Calculate price based on planet type and market conditions with stability"""
+        """Calculate price based on planet type and market conditions - allows crashes and booms"""
         price_modifiers = {
             "agricultural": {"food": 0.7, "technology": 1.3, "minerals": 1.1, "luxury": 1.2},
             "industrial": {"minerals": 0.8, "technology": 0.9, "food": 1.4, "luxury": 1.1},
@@ -333,13 +333,11 @@ class Commodity:
         
         modifier = price_modifiers.get(planet_type, {}).get(self.category, 1.0)
         
-        # Clamp supply_demand_modifier to prevent extreme price swings
-        stable_modifier = max(0.3, min(3.0, supply_demand_modifier))
+        # Allow full price volatility - crashes and booms are realistic!
+        final_price = self.base_price * modifier * supply_demand_modifier
         
-        final_price = self.base_price * modifier * stable_modifier
-        # More reasonable minimum price based on base price
-        min_price = max(1, int(self.base_price * 0.2))
-        return max(min_price, int(final_price))
+        # Only prevent technical issues (negative/zero prices), not economic ones
+        return max(1, int(final_price))
 
 class CargoSystem:
     def __init__(self, max_capacity=100):
@@ -448,9 +446,9 @@ class PlanetEconomy:
                 self.stockpiles[commodity] = 0
                 
     def daily_economic_update(self):
-        """Process daily production, consumption, and trade effects with stability"""
+        """Process daily production, consumption, and trade effects - realistic economics"""
         
-        # 1. PRODUCTION PHASE
+        # 1. PRODUCTION PHASE - Only what the planet actually produces
         for commodity, amount in self.daily_production.items():
             production = amount
             
@@ -460,47 +458,55 @@ class PlanetEconomy:
                 
             self.stockpiles[commodity] = self.stockpiles.get(commodity, 0) + production
             
-        # 2. CONSUMPTION PHASE (BALANCED)
+        # 2. CONSUMPTION PHASE - Realistic rationing when supplies are low
         for commodity, amount in self.daily_consumption.items():
             current_stock = self.stockpiles.get(commodity, 0)
-            consumption = amount
             
-            # Scale consumption based on availability to prevent negative stockpiles
-            if current_stock < consumption:
-                # Emergency rationing - reduce consumption to match supply
-                consumption = max(int(current_stock * 0.8), 0)  # Use 80% of available stock
+            # Calculate actual consumption based on availability
+            if current_stock >= amount:
+                # Normal consumption when supplies are adequate
+                actual_consumption = amount
+            elif current_stock > 0:
+                # Rationing when supplies are limited - use what's available
+                actual_consumption = current_stock
+                shortage_ratio = actual_consumption / amount if amount > 0 else 0
                 
-            # Starvation effects only if we have some stock
-            if current_stock > 0 and current_stock < consumption * 3:  # Less than 3 days supply
-                consumption = min(consumption, int(current_stock * 0.9))  # Conservative consumption
+                # Only print shortage messages for severe shortages to avoid spam
+                if shortage_ratio < 0.3:  # Less than 30% of needs met
+                    print(f"⚠️ {self.planet_name}: Critical {commodity} shortage! ({shortage_ratio:.1%} needs met)")
+            else:
+                # No supply available
+                actual_consumption = 0
+                print(f"🚨 {self.planet_name}: Complete {commodity} shortage!")
                 
-            # Safe consumption - never go below zero
-            actual_consumption = min(consumption, current_stock)
+            # Update stockpiles - can go to zero naturally
             self.stockpiles[commodity] = max(0, current_stock - actual_consumption)
-            
-            # Track shortages for realistic pricing (but less spam)
-            if actual_consumption < amount and amount > 0:  # Original consumption target not met
-                shortage_ratio = actual_consumption / amount
-                if shortage_ratio < 0.5:  # Only log severe shortages
-                    print(f"{self.planet_name} severe {commodity} shortage! ({shortage_ratio:.1%} needs met)")
                 
-        # 3. EMERGENCY SUPPLY ADJUSTMENT
-        # If stockpiles are critically low, temporarily boost production
-        for commodity in self.stockpiles:
-            if self.stockpiles[commodity] < 10:  # Critical shortage
-                emergency_production = self.daily_production.get(commodity, 0) * 0.5
-                if emergency_production > 0:
-                    self.stockpiles[commodity] += int(emergency_production)
-                
-        # 4. BLOCKADE EFFECTS (REDUCED IMPACT)
+        # 3. BLOCKADE EFFECTS - Realistic waste and disruption
         if self.blockaded:
             self.blockade_days += 1
-            # Reduced waste during blockade to prevent economic collapse
+            # Blockades cause waste through disrupted logistics
             for commodity in self.stockpiles:
-                waste = max(1, int(self.stockpiles[commodity] * 0.01))  # 1% daily waste (reduced)
-                self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - waste)
+                if self.stockpiles[commodity] > 0:
+                    waste = max(1, int(self.stockpiles[commodity] * 0.02))  # 2% daily waste
+                    self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - waste)
         else:
             self.blockade_days = 0
+            
+        # 4. MARKET RESPONSE TO SHORTAGES - Increased trading activity, not free resources
+        self.urgent_needs = []
+        for commodity, amount in self.daily_consumption.items():
+            current_stock = self.stockpiles.get(commodity, 0)
+            days_remaining = current_stock / amount if amount > 0 else float('inf')
+            
+            if days_remaining < 5:  # Less than 5 days supply
+                urgency = "CRITICAL" if days_remaining < 1 else "HIGH"
+                self.urgent_needs.append({
+                    'commodity': commodity,
+                    'days_remaining': days_remaining,
+                    'urgency': urgency,
+                    'max_price_willing': self.get_buy_price(commodity) * (3 if urgency == "CRITICAL" else 2)
+                })
             
         # 5. RESET DAILY TRADE TRACKING
         self.trade_volume_today = {}
@@ -516,49 +522,63 @@ class PlanetEconomy:
         return max(0, stockpile - strategic_reserve)
         
     def get_buy_price(self, commodity):
-        """Calculate realistic buy price based on supply/demand"""
+        """Calculate buy price with realistic market volatility - allows crashes and booms"""
         base_commodity = market_system.commodities.get(commodity)
         if not base_commodity:
             return 0
             
         base_price = base_commodity.base_price
         
-        # Supply factor
+        # Supply factor - dramatic price swings for shortages
         available = self.get_available_supply(commodity)
         consumption = self.daily_consumption.get(commodity, 1)
         
         if available <= 0:
-            supply_factor = 5.0  # Extreme scarcity
-        elif available < consumption * 5:  # Less than 5 days supply
-            if consumption > 0:  # Prevent division by zero
-                supply_factor = 2.0 + (5 - available/consumption) * 0.5
+            supply_factor = 20.0  # Extreme crisis pricing
+        elif available < consumption:  # Less than 1 day supply
+            if consumption > 0:
+                days_left = available / consumption
+                supply_factor = 10.0 + (1.0 - days_left) * 10.0  # 10x to 20x price
             else:
-                supply_factor = 5.0  # Treat as extreme scarcity
-        elif available < consumption * 15:  # Less than 15 days supply
-            if consumption > 0:  # Prevent division by zero
-                supply_factor = 1.0 + (15 - available/consumption) * 0.1
+                supply_factor = 15.0
+        elif available < consumption * 3:  # Less than 3 days supply
+            if consumption > 0:
+                days_left = available / consumption
+                supply_factor = 3.0 + (3.0 - days_left) * 2.0  # 3x to 9x price
             else:
-                supply_factor = 1.0  # Default supply factor
+                supply_factor = 5.0
+        elif available < consumption * 10:  # Less than 10 days supply
+            if consumption > 0:
+                days_left = available / consumption
+                supply_factor = 1.5 + (10.0 - days_left) * 0.15  # 1.5x to 2.5x price
+            else:
+                supply_factor = 2.0
+        elif available > consumption * 50:  # More than 50 days supply
+            supply_factor = 0.3  # Market crash - oversupply
         else:
-            supply_factor = 0.8  # Abundant supply
+            supply_factor = 1.0  # Normal market
             
-        # Demand factor (production surplus = lower prices)
+        # Demand factor (production surplus = market crash)
         production = self.daily_production.get(commodity, 0)
-        if production > consumption:
-            demand_factor = 0.7  # Surplus = cheap
+        if production > consumption * 2:
+            demand_factor = 0.2  # Massive oversupply crash
+        elif production > consumption:
+            demand_factor = 0.5  # Oversupply
+        elif production < consumption * 0.5:
+            demand_factor = 2.0  # High demand
         else:
-            demand_factor = 1.2  # Deficit = expensive
+            demand_factor = 1.0  # Balanced
             
-        # Blockade factor
-        blockade_factor = 1.0 + (self.blockade_days * 0.1) if self.blockaded else 1.0
+        # Blockade factor - dramatic price increases
+        blockade_factor = 1.0 + (self.blockade_days * 0.2) if self.blockaded else 1.0
         
-        # Planet type modifier
+        # Planet type modifier - specialization matters
         planet_modifiers = {
-            "agricultural": {"food": 0.6, "technology": 1.4, "minerals": 1.2, "luxury_goods": 1.3},
-            "industrial": {"minerals": 0.8, "technology": 0.7, "food": 1.5, "weapons": 0.8},
-            "mining": {"minerals": 0.5, "fuel": 0.6, "technology": 1.6, "food": 1.4},
-            "tech": {"technology": 0.6, "medicine": 0.7, "minerals": 1.3, "food": 1.3},
-            "luxury": {"luxury_goods": 0.7, "spices": 0.6, "food": 1.2, "technology": 1.2}
+            "agricultural": {"food": 0.4, "technology": 2.0, "minerals": 1.5, "luxury_goods": 1.8},
+            "industrial": {"minerals": 0.6, "technology": 0.5, "food": 2.5, "weapons": 0.6},
+            "mining": {"minerals": 0.3, "fuel": 0.4, "technology": 2.5, "food": 2.0},
+            "tech": {"technology": 0.4, "medicine": 0.5, "minerals": 1.8, "food": 1.8},
+            "luxury": {"luxury_goods": 0.5, "spices": 0.4, "food": 1.5, "technology": 1.5}
         }
         
         planet_factor = planet_modifiers.get(self.planet_type, {}).get(
@@ -568,19 +588,37 @@ class PlanetEconomy:
         return max(1, int(final_price))
         
     def get_sell_price(self, commodity):
-        """Price planet pays when buying from player"""
+        """Price planet pays when buying from player - dramatic swings based on need"""
         buy_price = self.get_buy_price(commodity)
         
-        # Higher demand = better sell prices
+        # Calculate urgency of need
         available = self.get_available_supply(commodity)
         consumption = self.daily_consumption.get(commodity, 1)
         
         if available <= 0:
-            sell_ratio = 0.95  # Desperate for supplies
-        elif available < consumption * 3:
-            sell_ratio = 0.85  # High demand
+            sell_ratio = 0.98  # Desperate - pay almost full market price
+        elif available < consumption:  # Less than 1 day supply
+            sell_ratio = 0.95  # Critical need
+        elif available < consumption * 3:  # Less than 3 days supply
+            sell_ratio = 0.90  # High demand
+        elif available < consumption * 10:  # Less than 10 days supply
+            sell_ratio = 0.85  # Moderate demand
         else:
-            sell_ratio = 0.75  # Normal demand
+            # Check if planet actually needs this commodity
+            if commodity in self.daily_consumption and self.daily_consumption[commodity] > 0:
+                sell_ratio = 0.75  # Normal demand
+            else:
+                sell_ratio = 0.40  # Low demand - planet doesn't really need this
+            
+        # Bonus for urgent needs
+        if hasattr(self, 'urgent_needs'):
+            for need in self.urgent_needs:
+                if need['commodity'] == commodity:
+                    if need['urgency'] == "CRITICAL":
+                        sell_ratio = min(0.99, sell_ratio + 0.10)  # Desperation bonus
+                    else:
+                        sell_ratio = min(0.95, sell_ratio + 0.05)  # Urgency bonus
+                    break
             
         return max(1, int(buy_price * sell_ratio))
         
