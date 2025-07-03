@@ -388,6 +388,23 @@ class SpaceController(Entity):
             scale=0.8,
             color=color.red
         )
+        
+        # Crew and time display
+        self.crew_text = Text(
+            parent=camera.ui,
+            text='Crew: 2/10 (Morale: 75%)',
+            position=(-0.45, 0.25),
+            scale=0.8,
+            color=color.green
+        )
+        
+        self.time_text = Text(
+            parent=camera.ui,
+            text='Day 1',
+            position=(-0.45, 0.2),
+            scale=0.8,
+            color=color.white
+        )
 
     def update(self):
         if not paused:
@@ -442,6 +459,13 @@ class SpaceController(Entity):
             
             # Update health display
             self.health_text.text = f'Health: {combat_system.player_health}/{combat_system.max_health}'
+            
+            # Update crew display
+            crew_count = len(crew_system.crew_members)
+            self.crew_text.text = f'Crew: {crew_count}/{crew_system.max_crew} (Morale: {crew_system.morale}%)'
+            
+            # Update time display
+            self.time_text.text = f'Day {time_system.game_day}'
 
 # Player setup with proper 3D movement
 player = SpaceController()
@@ -702,6 +726,65 @@ class SceneManager:
             
             self.town_entities.extend([shipyard, shipyard_sign])
             
+            # Add faction embassy (purple building)
+            embassy = Entity(
+                model='cube',
+                color=color.violet,
+                texture='white_cube',
+                position=(0, 3, -10),  # Behind podium
+                scale=(6, 6, 6),
+                collider='box'
+            )
+            
+            embassy_sign = Text(
+                parent=embassy,
+                text='FACTION EMBASSY\n[R] for Relations',
+                position=(0, 0, 3.1),
+                scale=100,
+                color=color.white,
+                billboard=True
+            )
+            
+            # Add crew quarters (green building)
+            crew_quarters = Entity(
+                model='cube',
+                color=color.lime,
+                texture='white_cube',
+                position=(0, 3, 10),  # In front of podium
+                scale=(6, 6, 6),
+                collider='box'
+            )
+            
+            crew_sign = Text(
+                parent=crew_quarters,
+                text='CREW QUARTERS\n[C] for Crew Management',
+                position=(0, 0, 3.1),
+                scale=100,
+                color=color.white,
+                billboard=True
+            )
+            
+            # Add mission board (yellow building)
+            mission_board = Entity(
+                model='cube',
+                color=color.gold,
+                texture='white_cube',
+                position=(-10, 3, -10),  # Corner position
+                scale=(6, 6, 6),
+                collider='box'
+            )
+            
+            mission_sign = Text(
+                parent=mission_board,
+                text='MISSION BOARD\n[M] for Missions',
+                position=(0, 0, 3.1),
+                scale=100,
+                color=color.white,
+                billboard=True
+            )
+            
+            self.town_entities.extend([embassy, embassy_sign, crew_quarters, crew_sign, mission_board, mission_sign])
+            
             # Add some NPCs (simple colored cubes for now)
             npc_positions = [(15, 1, 15), (-15, 1, -15), (20, 1, -10), (-10, 1, 20)]
             for i, pos in enumerate(npc_positions):
@@ -736,6 +819,8 @@ class SceneManager:
             self.space_controller.credits_text.enabled = False
             self.space_controller.cargo_text.enabled = False
             self.space_controller.health_text.enabled = False
+            self.space_controller.crew_text.enabled = False
+            self.space_controller.time_text.enabled = False
             
             # Hide space entities
             for entity in self.space_entities:
@@ -774,6 +859,8 @@ class SceneManager:
             self.space_controller.credits_text.enabled = True
             self.space_controller.cargo_text.enabled = True
             self.space_controller.health_text.enabled = True
+            self.space_controller.crew_text.enabled = True
+            self.space_controller.time_text.enabled = True
             camera.parent = self.space_controller
             camera.rotation = (0, 0, 0)
             camera.position = (0, 0, -15) if self.space_controller.third_person else (0, 0, 0)
@@ -1016,6 +1103,13 @@ class RandomEventSystem:
                 reward = random.randint(50, 200)
                 player_wallet.earn(reward)
                 print(f"You found {reward} credits in the derelict ship!")
+                
+                # Small chance to find valuable cargo
+                if random.random() < 0.3:
+                    rare_cargo = random.choice(['technology', 'luxury_goods', 'weapons'])
+                    if player_cargo.can_add(rare_cargo, 1):
+                        player_cargo.add_cargo(rare_cargo, 1)
+                        print(f"You also found rare {rare_cargo.replace('_', ' ')}!")
             else:
                 damage = random.randint(10, 30)
                 print(f"The ship was booby-trapped! You lose {damage} credits in repairs.")
@@ -1030,14 +1124,27 @@ class RandomEventSystem:
                 self.handle_event_action('fight_pirates')
                 
         elif action == 'fight_pirates':
-            if random.random() < 0.7:  # 70% chance to win based on upgrades
+            # Combat success based on crew, weapons, and ship upgrades
+            combat_bonus = crew_system.get_total_bonuses()["combat"]
+            weapon_bonus = combat_system.weapon_level * 10
+            success_chance = 0.5 + (combat_bonus + weapon_bonus) / 100
+            
+            if random.random() < success_chance:
                 reward = random.randint(100, 300)
                 player_wallet.earn(reward)
                 print(f"You defeated the pirates and salvaged {reward} credits!")
+                
+                # Gain reputation with law-abiding factions
+                faction_system.change_reputation('terran_federation', 5)
+                faction_system.change_reputation('mars_republic', 3)
+                faction_system.change_reputation('merchant_guild', 5)
+                # Lose reputation with pirates
+                faction_system.change_reputation('outer_rim_pirates', -10)
             else:
                 damage = random.randint(50, 100)
                 print(f"The pirates damaged your ship! Repair costs: {damage} credits.")
                 player_wallet.spend(min(damage, player_wallet.credits))
+                combat_system.take_damage(random.randint(10, 30))
                 
         elif action == 'escape_pirates':
             if random.random() < 0.8:  # 80% chance to escape
@@ -1121,9 +1228,288 @@ class CombatSystem:
             return True
         return False
 
+# Faction System - Core of Pirates! gameplay
+class Faction:
+    def __init__(self, name, color_scheme, home_planets=None):
+        self.name = name
+        self.color_scheme = color_scheme
+        self.home_planets = home_planets or []
+        self.wealth = random.randint(50000, 100000)
+        self.military_strength = random.randint(50, 100)
+        self.trade_power = random.randint(30, 80)
+        
+        # Relationships with other factions (-100 to 100)
+        self.relationships = {}
+        
+class FactionSystem:
+    def __init__(self):
+        self.factions = {
+            'terran_federation': Faction("Terran Federation", color.blue),
+            'mars_republic': Faction("Mars Republic", color.red), 
+            'jupiter_consortium': Faction("Jupiter Consortium", color.orange),
+            'outer_rim_pirates': Faction("Outer Rim Pirates", color.dark_gray),
+            'merchant_guild': Faction("Merchant Guild", color.green),
+            'independent': Faction("Independent Colonies", color.white)
+        }
+        
+        # Player reputation with each faction (-100 to 100)
+        self.player_reputation = {
+            faction_id: 0 for faction_id in self.factions.keys()
+        }
+        
+        # Set up initial relationships between factions
+        self.setup_faction_relationships()
+        
+    def setup_faction_relationships(self):
+        # Set up complex web of faction relationships
+        relationships = {
+            'terran_federation': {'mars_republic': -30, 'jupiter_consortium': 20, 'outer_rim_pirates': -80, 'merchant_guild': 40, 'independent': 10},
+            'mars_republic': {'terran_federation': -30, 'jupiter_consortium': -10, 'outer_rim_pirates': -60, 'merchant_guild': 20, 'independent': 30},
+            'jupiter_consortium': {'terran_federation': 20, 'mars_republic': -10, 'outer_rim_pirates': -40, 'merchant_guild': 60, 'independent': 0},
+            'outer_rim_pirates': {'terran_federation': -80, 'mars_republic': -60, 'jupiter_consortium': -40, 'merchant_guild': -50, 'independent': 10},
+            'merchant_guild': {'terran_federation': 40, 'mars_republic': 20, 'jupiter_consortium': 60, 'outer_rim_pirates': -50, 'independent': 30},
+            'independent': {'terran_federation': 10, 'mars_republic': 30, 'jupiter_consortium': 0, 'outer_rim_pirates': 10, 'merchant_guild': 30}
+        }
+        
+        for faction_id, faction in self.factions.items():
+            faction.relationships = relationships.get(faction_id, {})
+            
+    def change_reputation(self, faction_id, change):
+        if faction_id in self.player_reputation:
+            old_rep = self.player_reputation[faction_id]
+            self.player_reputation[faction_id] = max(-100, min(100, old_rep + change))
+            
+            # Reputation changes affect relationships with allied/enemy factions
+            self.apply_reputation_effects(faction_id, change)
+            
+    def apply_reputation_effects(self, changed_faction, change):
+        faction = self.factions[changed_faction]
+        for other_faction_id, relationship in faction.relationships.items():
+            if relationship > 50:  # Allied factions
+                self.player_reputation[other_faction_id] += int(change * 0.3)
+            elif relationship < -50:  # Enemy factions
+                self.player_reputation[other_faction_id] -= int(change * 0.2)
+                
+    def get_reputation_status(self, faction_id):
+        rep = self.player_reputation[faction_id]
+        if rep >= 80: return "Hero"
+        elif rep >= 60: return "Champion"
+        elif rep >= 40: return "Friend"
+        elif rep >= 20: return "Ally"
+        elif rep >= -20: return "Neutral"
+        elif rep >= -40: return "Disliked"
+        elif rep >= -60: return "Enemy"
+        elif rep >= -80: return "Hostile"
+        else: return "Nemesis"
+
+# Crew Management System
+class CrewMember:
+    def __init__(self, name=None, skill_type="general"):
+        self.name = name or f"{random.choice(['Alex', 'Sam', 'Chris', 'Jordan', 'Taylor', 'Casey', 'Riley', 'Avery', 'Quinn', 'Morgan'])}-{random.randint(100, 999)}"
+        self.skill_type = skill_type  # gunner, pilot, engineer, medic, general
+        self.skill_level = random.randint(1, 10)
+        self.loyalty = random.randint(50, 80)
+        self.wage = self.skill_level * 5  # Daily wage
+        
+    def get_bonus(self):
+        """Get the bonus this crew member provides"""
+        if self.skill_type == "gunner":
+            return {"combat": self.skill_level * 2}
+        elif self.skill_type == "pilot":
+            return {"speed": self.skill_level * 1.5}
+        elif self.skill_type == "engineer":
+            return {"efficiency": self.skill_level * 1.2}
+        elif self.skill_type == "medic":
+            return {"health_regen": self.skill_level * 0.5}
+        else:
+            return {"general": self.skill_level}
+
+class CrewSystem:
+    def __init__(self):
+        self.crew_members = []
+        self.max_crew = 10  # Starting crew capacity
+        self.morale = 75
+        self.daily_wages = 0
+        
+        # Start with a small crew
+        self.hire_crew_member(CrewMember("First Mate Jenkins", "pilot"))
+        self.hire_crew_member(CrewMember("Engineer Rodriguez", "engineer"))
+        
+    def hire_crew_member(self, crew_member):
+        if len(self.crew_members) < self.max_crew:
+            self.crew_members.append(crew_member)
+            self.calculate_daily_wages()
+            return True
+        return False
+        
+    def fire_crew_member(self, index):
+        if 0 <= index < len(self.crew_members):
+            self.crew_members.pop(index)
+            self.calculate_daily_wages()
+            self.morale -= 5  # Firing crew lowers morale
+            
+    def calculate_daily_wages(self):
+        self.daily_wages = sum(member.wage for member in self.crew_members)
+        
+    def pay_crew(self):
+        """Pay daily wages to crew"""
+        if player_wallet.can_afford(self.daily_wages):
+            player_wallet.spend(self.daily_wages)
+            self.morale = min(100, self.morale + 2)  # Paying crew improves morale
+            return True
+        else:
+            self.morale = max(0, self.morale - 10)  # Not paying severely hurts morale
+            return False
+            
+    def get_total_bonuses(self):
+        """Calculate total bonuses from all crew members"""
+        bonuses = {"combat": 0, "speed": 0, "efficiency": 0, "health_regen": 0, "general": 0}
+        for member in self.crew_members:
+            member_bonuses = member.get_bonus()
+            for bonus_type, value in member_bonuses.items():
+                if bonus_type in bonuses:
+                    bonuses[bonus_type] += value
+        return bonuses
+        
+    def update_morale(self):
+        """Daily morale updates based on various factors"""
+        # Base morale decay
+        self.morale = max(0, self.morale - 1)
+        
+        # Morale effects on crew performance
+        if self.morale < 30:
+            # Low morale can cause crew to leave
+            if random.random() < 0.1:  # 10% chance daily
+                if self.crew_members:
+                    leaving_member = random.choice(self.crew_members)
+                    self.crew_members.remove(leaving_member)
+                    print(f"{leaving_member.name} left the crew due to low morale!")
+                    
+    def get_crew_efficiency(self):
+        """Get overall crew efficiency multiplier based on morale"""
+        if self.morale >= 80:
+            return 1.2
+        elif self.morale >= 60:
+            return 1.0
+        elif self.morale >= 40:
+            return 0.9
+        elif self.morale >= 20:
+            return 0.8
+        else:
+            return 0.7
+
+# Time and Mission System
+class TimeSystem:
+    def __init__(self):
+        self.game_day = 1
+        self.last_day_update = time.time()
+        self.day_length = 300  # 5 minutes = 1 game day
+        
+    def update(self):
+        current_time = time.time()
+        if current_time - self.last_day_update >= self.day_length:
+            self.advance_day()
+            self.last_day_update = current_time
+            
+    def advance_day(self):
+        self.game_day += 1
+        
+        # Daily crew maintenance
+        crew_system.pay_crew()
+        crew_system.update_morale()
+        
+        # Health regeneration
+        if crew_system.crew_members:
+            health_regen = crew_system.get_total_bonuses()["health_regen"]
+            combat_system.heal(int(health_regen))
+            
+        # Market fluctuations
+        self.update_markets()
+        
+        print(f"Day {self.game_day} - Crew wages: {crew_system.daily_wages} credits")
+        
+    def update_markets(self):
+        """Update market prices daily"""
+        for planet_name, planet_data in market_system.planet_markets.items():
+            market = planet_data['market']
+            for commodity in market:
+                # Small daily price fluctuations
+                change = random.uniform(-0.1, 0.1)
+                market[commodity] = max(0.3, min(3.0, market[commodity] + change))
+
+class Mission:
+    def __init__(self, mission_type, faction_id, description, reward, reputation_change, requirements=None):
+        self.mission_type = mission_type
+        self.faction_id = faction_id
+        self.description = description
+        self.reward = reward
+        self.reputation_change = reputation_change
+        self.requirements = requirements or {}
+        self.completed = False
+        
+class MissionSystem:
+    def __init__(self):
+        self.available_missions = []
+        self.active_missions = []
+        self.last_mission_generation = 0
+        
+    def generate_missions(self):
+        """Generate new missions periodically"""
+        if time.time() - self.last_mission_generation > 60:  # New missions every minute
+            self.create_random_missions()
+            self.last_mission_generation = time.time()
+            
+    def create_random_missions(self):
+        mission_types = [
+            {
+                "type": "delivery",
+                "description": "Deliver cargo to {target_planet}",
+                "reward": random.randint(200, 500),
+                "reputation": 10
+            },
+            {
+                "type": "escort",
+                "description": "Escort merchant convoy through dangerous space",
+                "reward": random.randint(300, 700),
+                "reputation": 15
+            },
+            {
+                "type": "patrol",
+                "description": "Patrol sector and eliminate pirate threats",
+                "reward": random.randint(400, 800),
+                "reputation": 20
+            },
+            {
+                "type": "reconnaissance",
+                "description": "Scout enemy positions in contested space",
+                "reward": random.randint(250, 600),
+                "reputation": 12
+            }
+        ]
+        
+        # Clear old missions
+        self.available_missions.clear()
+        
+        # Generate new missions for each faction
+        for faction_id in faction_system.factions.keys():
+            if faction_id != 'outer_rim_pirates':  # Pirates don't give normal missions
+                mission_template = random.choice(mission_types)
+                mission = Mission(
+                    mission_template["type"],
+                    faction_id,
+                    mission_template["description"],
+                    mission_template["reward"],
+                    mission_template["reputation"]
+                )
+                self.available_missions.append(mission)
+
 # Create systems
 random_event_system = RandomEventSystem()
 combat_system = CombatSystem()
+faction_system = FactionSystem()
+crew_system = CrewSystem()
+time_system = TimeSystem()
+mission_system = MissionSystem()
 
 # Trading UI
 class TradingUI:
@@ -1517,10 +1903,358 @@ class EventUI:
 # Create event UI
 event_ui = EventUI()
 
+# Faction Relations UI
+class FactionUI:
+    def __init__(self):
+        self.active = False
+        
+        # Main faction panel
+        self.panel = Panel(
+            parent=camera.ui,
+            model='quad',
+            scale=(0.9, 0.8),
+            color=color.black66,
+            enabled=False
+        )
+        
+        # Title
+        self.title = Text(
+            parent=self.panel,
+            text='FACTION RELATIONS',
+            position=(0, 0.35),
+            scale=1.5,
+            color=color.yellow
+        )
+        
+        # Faction list
+        self.faction_list = Text(
+            parent=self.panel,
+            text='',
+            position=(0, -0.05),
+            scale=0.9,
+            color=color.white
+        )
+        
+        # Instructions
+        self.instructions = Text(
+            parent=self.panel,
+            text='ESC to close',
+            position=(0, -0.35),
+            scale=1,
+            color=color.light_gray
+        )
+        
+    def show(self):
+        self.active = True
+        self.panel.enabled = True
+        self.update_display()
+        
+        # Pause game and show cursor
+        mouse.locked = False
+        mouse.visible = True
+        
+    def hide(self):
+        self.active = False
+        self.panel.enabled = False
+        
+        # Resume game and hide cursor
+        mouse.locked = True
+        mouse.visible = False
+        
+    def update_display(self):
+        faction_text = "FACTION STANDINGS:\n\n"
+        
+        for faction_id, faction in faction_system.factions.items():
+            reputation = faction_system.player_reputation[faction_id]
+            status = faction_system.get_reputation_status(faction_id)
+            
+            # Color code based on reputation
+            if reputation >= 40:
+                color_indicator = "✓"
+            elif reputation >= -20:
+                color_indicator = "○"
+            else:
+                color_indicator = "✗"
+                
+            faction_text += f"{color_indicator} {faction.name}: {status} ({reputation:+d})\n"
+        
+        self.faction_list.text = faction_text
+
+# Crew Management UI
+class CrewUI:
+    def __init__(self):
+        self.active = False
+        
+        # Main crew panel
+        self.panel = Panel(
+            parent=camera.ui,
+            model='quad',
+            scale=(0.9, 0.8),
+            color=color.black66,
+            enabled=False
+        )
+        
+        # Title
+        self.title = Text(
+            parent=self.panel,
+            text='CREW MANAGEMENT',
+            position=(0, 0.35),
+            scale=1.5,
+            color=color.green
+        )
+        
+        # Crew info
+        self.crew_info = Text(
+            parent=self.panel,
+            text='',
+            position=(-0.4, 0.2),
+            scale=0.8,
+            color=color.white
+        )
+        
+        # Available crew
+        self.available_crew = Text(
+            parent=self.panel,
+            text='',
+            position=(0.4, 0.2),
+            scale=0.8,
+            color=color.cyan
+        )
+        
+        # Instructions
+        self.instructions = Text(
+            parent=self.panel,
+            text='H to hire available crew • F to fire crew member • ESC to close',
+            position=(0, -0.35),
+            scale=0.8,
+            color=color.light_gray
+        )
+        
+        # Generate some available crew for hiring
+        self.available_for_hire = []
+        self.generate_available_crew()
+        
+    def generate_available_crew(self):
+        self.available_for_hire.clear()
+        skill_types = ["gunner", "pilot", "engineer", "medic", "general"]
+        for _ in range(3):
+            skill = random.choice(skill_types)
+            crew_member = CrewMember(skill_type=skill)
+            self.available_for_hire.append(crew_member)
+        
+    def show(self):
+        self.active = True
+        self.panel.enabled = True
+        self.update_display()
+        
+        # Pause game and show cursor
+        mouse.locked = False
+        mouse.visible = True
+        
+    def hide(self):
+        self.active = False
+        self.panel.enabled = False
+        
+        # Resume game and hide cursor
+        mouse.locked = True
+        mouse.visible = False
+        
+    def update_display(self):
+        # Current crew info
+        crew_text = f"CURRENT CREW ({len(crew_system.crew_members)}/{crew_system.max_crew}):\n"
+        crew_text += f"Morale: {crew_system.morale}%\n"
+        crew_text += f"Daily Wages: {crew_system.daily_wages} credits\n\n"
+        
+        for i, member in enumerate(crew_system.crew_members):
+            crew_text += f"{i+1}. {member.name}\n"
+            crew_text += f"   {member.skill_type.title()} (Skill: {member.skill_level})\n"
+            crew_text += f"   Wage: {member.wage} credits/day\n\n"
+        
+        self.crew_info.text = crew_text
+        
+        # Available crew
+        available_text = "AVAILABLE FOR HIRE:\n\n"
+        for i, member in enumerate(self.available_for_hire):
+            cost = member.skill_level * 50  # Hiring cost
+            available_text += f"{i+1}. {member.name}\n"
+            available_text += f"   {member.skill_type.title()} (Skill: {member.skill_level})\n"
+            available_text += f"   Hiring Cost: {cost} credits\n"
+            available_text += f"   Daily Wage: {member.wage} credits\n\n"
+            
+        self.available_crew.text = available_text
+        
+    def handle_input(self, key):
+        if not self.active:
+            return False
+            
+        if key == 'h':
+            self.hire_crew()
+            return True
+        elif key == 'f':
+            self.fire_crew()
+            return True
+            
+        return False
+        
+    def hire_crew(self):
+        if self.available_for_hire and len(crew_system.crew_members) < crew_system.max_crew:
+            new_crew = self.available_for_hire[0]
+            hiring_cost = new_crew.skill_level * 50
+            
+            if player_wallet.can_afford(hiring_cost):
+                player_wallet.spend(hiring_cost)
+                crew_system.hire_crew_member(new_crew)
+                self.available_for_hire.remove(new_crew)
+                print(f"Hired {new_crew.name} for {hiring_cost} credits!")
+                
+                # Generate new crew member to replace hired one
+                skill_types = ["gunner", "pilot", "engineer", "medic", "general"]
+                skill = random.choice(skill_types)
+                replacement = CrewMember(skill_type=skill)
+                self.available_for_hire.append(replacement)
+                
+                self.update_display()
+            else:
+                print("Not enough credits to hire crew!")
+        else:
+            print("Cannot hire more crew!")
+            
+    def fire_crew(self):
+        if crew_system.crew_members:
+            # Fire the last crew member for simplicity
+            fired_member = crew_system.crew_members[-1]
+            crew_system.fire_crew_member(len(crew_system.crew_members) - 1)
+            print(f"Fired {fired_member.name}")
+            self.update_display()
+        else:
+            print("No crew to fire!")
+
+# Mission Board UI
+class MissionUI:
+    def __init__(self):
+        self.active = False
+        
+        # Main mission panel
+        self.panel = Panel(
+            parent=camera.ui,
+            model='quad',
+            scale=(0.9, 0.8),
+            color=color.black66,
+            enabled=False
+        )
+        
+        # Title
+        self.title = Text(
+            parent=self.panel,
+            text='MISSION BOARD',
+            position=(0, 0.35),
+            scale=1.5,
+            color=color.orange
+        )
+        
+        # Mission list
+        self.mission_list = Text(
+            parent=self.panel,
+            text='',
+            position=(0, -0.05),
+            scale=0.8,
+            color=color.white
+        )
+        
+        # Instructions
+        self.instructions = Text(
+            parent=self.panel,
+            text='1-5 to accept mission • ESC to close',
+            position=(0, -0.35),
+            scale=1,
+            color=color.light_gray
+        )
+        
+    def show(self):
+        self.active = True
+        self.panel.enabled = True
+        mission_system.generate_missions()
+        self.update_display()
+        
+        # Pause game and show cursor
+        mouse.locked = False
+        mouse.visible = True
+        
+    def hide(self):
+        self.active = False
+        self.panel.enabled = False
+        
+        # Resume game and hide cursor
+        mouse.locked = True
+        mouse.visible = False
+        
+    def update_display(self):
+        mission_text = "AVAILABLE MISSIONS:\n\n"
+        
+        for i, mission in enumerate(mission_system.available_missions[:5]):  # Show first 5
+            faction_name = faction_system.factions[mission.faction_id].name
+            reputation_req = faction_system.get_reputation_status(mission.faction_id)
+            
+            mission_text += f"{i+1}. {mission.description}\n"
+            mission_text += f"   Client: {faction_name}\n"
+            mission_text += f"   Reward: {mission.reward} credits\n"
+            mission_text += f"   Reputation: +{mission.reputation_change}\n\n"
+            
+        if not mission_system.available_missions:
+            mission_text += "No missions available. Check back later."
+            
+        self.mission_list.text = mission_text
+        
+    def handle_input(self, key):
+        if not self.active:
+            return False
+            
+        if key in '12345':
+            mission_index = int(key) - 1
+            if mission_index < len(mission_system.available_missions):
+                mission = mission_system.available_missions[mission_index]
+                self.accept_mission(mission)
+                return True
+                
+        return False
+        
+    def accept_mission(self, mission):
+        # Check if player has good enough reputation
+        player_rep = faction_system.player_reputation[mission.faction_id]
+        if player_rep < -50:
+            print(f"Reputation too low with {faction_system.factions[mission.faction_id].name}!")
+            return
+            
+        mission_system.active_missions.append(mission)
+        mission_system.available_missions.remove(mission)
+        print(f"Accepted mission: {mission.description}")
+        print(f"Mission will auto-complete for now...")
+        
+        # Auto-complete mission for demonstration
+        self.complete_mission(mission)
+        
+    def complete_mission(self, mission):
+        # Award rewards
+        player_wallet.earn(mission.reward)
+        faction_system.change_reputation(mission.faction_id, mission.reputation_change)
+        
+        print(f"Mission completed! Earned {mission.reward} credits and reputation.")
+        
+        # Remove from active missions
+        if mission in mission_system.active_missions:
+            mission_system.active_missions.remove(mission)
+            
+        self.update_display()
+
+# Create UI systems
+faction_ui = FactionUI()
+crew_ui = CrewUI()
+mission_ui = MissionUI()
+
 def update():
     global nearby_planet
     
-    if not paused and not trading_ui.active and not upgrade_ui.active and not event_ui.active:
+    if not paused and not trading_ui.active and not upgrade_ui.active and not event_ui.active and not faction_ui.active and not crew_ui.active and not mission_ui.active:
         if scene_manager.current_state == GameState.SPACE:
             # Check if player is near any planet
             nearby_planet = None
@@ -1563,6 +2297,9 @@ def update():
                 if distance < 10:  # Within 10 units of trading post
                     # Display prompt on screen
                     pass  # We'll handle this with T key press
+                    
+    # Update time system
+    time_system.update()
 
 # Function to handle landing
 def land_on_planet():
@@ -1610,6 +2347,10 @@ def input(key):
         return
     if upgrade_ui.handle_input(key):
         return
+    if crew_ui.handle_input(key):
+        return
+    if mission_ui.handle_input(key):
+        return
     
     if key == 'escape':
         # Close UIs if open
@@ -1618,6 +2359,15 @@ def input(key):
             return
         if upgrade_ui.active:
             upgrade_ui.hide()
+            return
+        if faction_ui.active:
+            faction_ui.hide()
+            return
+        if crew_ui.active:
+            crew_ui.hide()
+            return
+        if mission_ui.active:
+            mission_ui.hide()
             return
             
         paused = not paused
@@ -1689,6 +2439,42 @@ def input(key):
                 upgrade_ui.show()
             else:
                 print("You need to be closer to the shipyard!")
+    
+    if key == 'r' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Open faction relations if near embassy
+        if scene_manager.town_controller:
+            player_pos = scene_manager.town_controller.position
+            embassy_pos = Vec3(0, 3, -10)  # Position of embassy
+            distance = (player_pos - embassy_pos).length()
+            
+            if distance < 10:  # Within range of embassy
+                faction_ui.show()
+            else:
+                print("You need to be closer to the embassy!")
+    
+    if key == 'c' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Open crew management if near crew quarters
+        if scene_manager.town_controller:
+            player_pos = scene_manager.town_controller.position
+            crew_quarters_pos = Vec3(0, 3, 10)  # Position of crew quarters
+            distance = (player_pos - crew_quarters_pos).length()
+            
+            if distance < 10:  # Within range of crew quarters
+                crew_ui.show()
+            else:
+                print("You need to be closer to the crew quarters!")
+    
+    if key == 'm' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Open mission board if near mission board
+        if scene_manager.town_controller:
+            player_pos = scene_manager.town_controller.position
+            mission_board_pos = Vec3(-10, 3, -10)  # Position of mission board
+            distance = (player_pos - mission_board_pos).length()
+            
+            if distance < 10:  # Within range of mission board
+                mission_ui.show()
+            else:
+                print("You need to be closer to the mission board!")
     
     if key == 'left mouse down' and not paused:
         if scene_manager.current_state == GameState.SPACE:

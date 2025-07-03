@@ -7,19 +7,20 @@ A space exploration game inspired by Sid Meier's Pirates! but with a focus on sp
 This game is in very early development. Many features are incomplete or may not work as expected.
 
 ## Features
-- Space exploration with multiple planets (10 different planet types!)
-- Landing and exploration on planets
-- First-person controls in both space and on planets
-- Basic jumping mechanics
-- **Trading System:** 8 different commodities with dynamic pricing
-- **Planet Economy:** Each planet type has different supply/demand
-- **Ship Upgrades:** Cargo, engines, fuel efficiency, weapons, shields
-- **Combat System:** Player health, weapons, and shield upgrades
+- **Space Exploration:** 10 different planet types with unique economies
+- **Faction System:** 6 major factions with complex relationships
+- **Reputation System:** Your actions affect standing with each faction
+- **Crew Management:** Hire specialists (gunners, pilots, engineers, medics)
+- **Time Progression:** Game advances in real-time with daily expenses
+- **Mission System:** Take contracts from faction leaders for rewards
+- **Trading System:** 8 commodities with dynamic, location-based pricing
+- **Ship Upgrades:** Enhance cargo, engines, fuel, weapons, and shields
+- **Combat System:** Tactical battles influenced by crew skills and equipment
 - **Random Encounters:** Derelict ships, pirates, merchants, asteroid fields
-- **Credits & Cargo:** Full economic gameplay loop
-- **Town Features:** Trading posts, shipyards, and NPCs
-- Save/Load system
-- Screenshot capability
+- **Town Features:** Trading posts, shipyards, embassies, crew quarters, mission boards
+- **Economic Warfare:** Market fluctuations and faction-based trade advantages
+- Landing and exploration on planets with FPS controls
+- Save/Load system and screenshot capability
 
 ## Requirements
 - Python 3.x
@@ -46,18 +47,33 @@ This game is in very early development. Many features are incomplete or may not 
 ```
 
 ## Controls
-- WASD: Movement
-- Space: Jump (on planets) / Up (in space)
-- Mouse: Look around
-- ESC: Pause menu (or close trading/upgrade interface)
-- **T**: Open trading interface (when near trading post)
-- **U**: Open upgrade interface (when near shipyard)
-- **1-8**: Buy commodities (in trading interface)
-- **SHIFT+1-8**: Sell commodities (in trading interface)
-- **1-3**: Purchase upgrades (in upgrade interface)
-- F6: Take screenshot
-- F7: Toggle third-person view
-- F8: Toggle between space and town modes
+
+### Basic Movement
+- **WASD**: Movement in space and on planets
+- **Space**: Jump (on planets) / Vertical up (in space)
+- **Shift**: Vertical down (in space)
+- **Q/E**: Roll ship (in space)
+- **Mouse**: Look around and steer ship
+
+### Game Management
+- **ESC**: Pause menu / Close any open interface
+- **F6**: Take screenshot
+- **F7**: Toggle third-person view (in space)
+- **F8**: Toggle between space and town modes
+
+### Town Interactions (When Near Buildings)
+- **T**: Trading Post - Buy/sell commodities
+- **U**: Shipyard - Upgrade your ship
+- **R**: Embassy - View faction relations
+- **C**: Crew Quarters - Manage your crew
+- **M**: Mission Board - Accept faction missions
+
+### Interface Controls
+- **1-8**: Buy commodities (trading) / Accept missions (mission board)
+- **SHIFT+1-8**: Sell commodities (trading interface)
+- **1-5**: Purchase upgrades (shipyard interface)
+- **H**: Hire crew member (crew management)
+- **F**: Fire crew member (crew management)
 
 ## Contributing
 This is an early alpha version. Feel free to submit issues and suggestions, but please be aware that the codebase is still in flux.

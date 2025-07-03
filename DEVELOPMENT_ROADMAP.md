@@ -30,6 +30,15 @@ A space exploration and trading game inspired by Sid Meier's Pirates! with focus
 - [x] **Trading posts and shipyards on planets**
 - [x] **Full economic gameplay loop**
 - [x] **Credits and cargo management**
+- [x] **6-faction system with complex relationships**
+- [x] **Reputation system affecting gameplay**
+- [x] **Crew management with specialist roles**
+- [x] **Time progression with daily expenses**
+- [x] **Mission system with faction contracts**
+- [x] **Enhanced combat with crew/equipment bonuses**
+- [x] **Faction embassies and mission boards**
+- [x] **Crew quarters and hiring system**
+- [x] **Real-time market fluctuations**
 
 ## Development Phases
 
