@@ -7,16 +7,17 @@ A space exploration game inspired by Sid Meier's Pirates! but with a focus on sp
 This game is in very early development. Many features are incomplete or may not work as expected.
 
 ## Features
-- Space exploration with multiple planets (now with planet types!)
+- Space exploration with multiple planets (10 different planet types!)
 - Landing and exploration on planets
 - First-person controls in both space and on planets
 - Basic jumping mechanics
-- **NEW:** Trading system with 8 different commodities
-- **NEW:** Dynamic market prices based on planet type
-- **NEW:** Ship upgrade system (cargo, engine, fuel efficiency)
-- **NEW:** Credits and cargo management
-- **NEW:** Trading posts and shipyards on planets
-- **NEW:** NPC characters in towns
+- **Trading System:** 8 different commodities with dynamic pricing
+- **Planet Economy:** Each planet type has different supply/demand
+- **Ship Upgrades:** Cargo, engines, fuel efficiency, weapons, shields
+- **Combat System:** Player health, weapons, and shield upgrades
+- **Random Encounters:** Derelict ships, pirates, merchants, asteroid fields
+- **Credits & Cargo:** Full economic gameplay loop
+- **Town Features:** Trading posts, shipyards, and NPCs
 - Save/Load system
 - Screenshot capability
 

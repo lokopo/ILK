@@ -21,6 +21,15 @@ A space exploration and trading game inspired by Sid Meier's Pirates! with focus
 - [x] Scene switching (space/planet surface)
 - [x] Simple projectile shooting
 - [x] Rotating skybox for immersion
+- [x] **Trading system with 8 commodities**
+- [x] **Dynamic market prices based on planet types**
+- [x] **10 different planet types with unique characteristics**
+- [x] **Ship upgrade system (cargo, engines, fuel, weapons, shields)**
+- [x] **Player health and combat system**
+- [x] **Random space encounters (4 different event types)**
+- [x] **Trading posts and shipyards on planets**
+- [x] **Full economic gameplay loop**
+- [x] **Credits and cargo management**
 
 ## Development Phases
 

@@ -26,7 +26,12 @@ class Commodity:
             "industrial": {"minerals": 0.8, "technology": 0.9, "food": 1.4, "luxury": 1.1},
             "mining": {"minerals": 0.6, "technology": 1.5, "food": 1.3, "luxury": 1.4},
             "tech": {"technology": 0.8, "luxury": 0.9, "food": 1.2, "minerals": 1.3},
-            "luxury": {"luxury": 0.8, "food": 1.1, "technology": 1.2, "minerals": 1.2}
+            "luxury": {"luxury": 0.8, "food": 1.1, "technology": 1.2, "minerals": 1.2},
+            "desert": {"food": 1.5, "technology": 1.2, "minerals": 0.9, "luxury": 1.3},
+            "ice": {"food": 1.4, "technology": 1.1, "minerals": 1.0, "luxury": 1.2},
+            "volcanic": {"minerals": 0.7, "technology": 1.3, "food": 1.6, "luxury": 1.1},
+            "gas_giant": {"fuel": 0.5, "technology": 1.4, "food": 1.8, "luxury": 1.0},
+            "oceanic": {"food": 0.9, "technology": 1.1, "minerals": 1.2, "luxury": 0.9}
         }
         
         modifier = price_modifiers.get(planet_type, {}).get(self.category, 1.0)
@@ -374,6 +379,15 @@ class SpaceController(Entity):
             scale=0.8,
             color=color.cyan
         )
+        
+        # Health and combat display
+        self.health_text = Text(
+            parent=camera.ui,
+            text='Health: 100/100',
+            position=(-0.45, 0.3),
+            scale=0.8,
+            color=color.red
+        )
 
     def update(self):
         if not paused:
@@ -425,6 +439,9 @@ class SpaceController(Entity):
             self.credits_text.text = f'Credits: {player_wallet.credits}'
             used_capacity = player_cargo.get_used_capacity()
             self.cargo_text.text = f'Cargo: {used_capacity}/{player_cargo.max_capacity}'
+            
+            # Update health display
+            self.health_text.text = f'Health: {combat_system.player_health}/{combat_system.max_health}'
 
 # Player setup with proper 3D movement
 player = SpaceController()
@@ -718,6 +735,7 @@ class SceneManager:
             self.space_controller.status_text.enabled = False
             self.space_controller.credits_text.enabled = False
             self.space_controller.cargo_text.enabled = False
+            self.space_controller.health_text.enabled = False
             
             # Hide space entities
             for entity in self.space_entities:
@@ -755,6 +773,7 @@ class SceneManager:
             self.space_controller.status_text.enabled = True
             self.space_controller.credits_text.enabled = True
             self.space_controller.cargo_text.enabled = True
+            self.space_controller.health_text.enabled = True
             camera.parent = self.space_controller
             camera.rotation = (0, 0, 0)
             camera.position = (0, 0, -15) if self.space_controller.third_person else (0, 0, 0)
@@ -845,7 +864,12 @@ class Planet(Entity):
             "industrial": {"color": color.gray, "name_prefix": "Forge"},
             "mining": {"color": color.brown, "name_prefix": "Mine"},
             "tech": {"color": color.blue, "name_prefix": "Tech"},
-            "luxury": {"color": color.magenta, "name_prefix": "Haven"}
+            "luxury": {"color": color.magenta, "name_prefix": "Haven"},
+            "desert": {"color": color.yellow, "name_prefix": "Dune"},
+            "ice": {"color": color.cyan, "name_prefix": "Frost"},
+            "volcanic": {"color": color.red, "name_prefix": "Ember"},
+            "gas_giant": {"color": color.violet, "name_prefix": "Storm"},
+            "oceanic": {"color": color.azure, "name_prefix": "Aqua"}
         }
         
         # Randomly select planet type
@@ -931,6 +955,175 @@ cancel_button = Button(
 
 # Variable to track the planet we're near
 nearby_planet = None
+
+# Random Events System
+class RandomEventSystem:
+    def __init__(self):
+        self.last_event_time = 0
+        self.event_cooldown = 30  # Minimum 30 seconds between events
+        self.event_chance = 0.02  # 2% chance per second when cooldown is over
+        
+        self.events = [
+            {
+                'name': 'Derelict Ship',
+                'description': 'You discover a derelict ship floating in space.',
+                'options': [
+                    {'text': 'Investigate (Risk/Reward)', 'action': 'investigate_derelict'},
+                    {'text': 'Ignore and continue', 'action': 'ignore'}
+                ]
+            },
+            {
+                'name': 'Pirate Encounter',
+                'description': 'A pirate ship demands tribute!',
+                'options': [
+                    {'text': 'Pay 50 credits', 'action': 'pay_pirates'},
+                    {'text': 'Fight!', 'action': 'fight_pirates'},
+                    {'text': 'Try to escape', 'action': 'escape_pirates'}
+                ]
+            },
+            {
+                'name': 'Merchant Convoy',
+                'description': 'A friendly merchant offers to trade.',
+                'options': [
+                    {'text': 'Trade with merchant', 'action': 'trade_merchant'},
+                    {'text': 'Continue on your way', 'action': 'ignore'}
+                ]
+            },
+            {
+                'name': 'Asteroid Field',
+                'description': 'You enter a dangerous asteroid field.',
+                'options': [
+                    {'text': 'Navigate carefully', 'action': 'navigate_asteroids'},
+                    {'text': 'Power through quickly', 'action': 'rush_asteroids'}
+                ]
+            }
+        ]
+        
+    def check_for_event(self):
+        current_time = time.time()
+        if current_time - self.last_event_time > self.event_cooldown:
+            if random.random() < self.event_chance:
+                self.trigger_random_event()
+                self.last_event_time = current_time
+                
+    def trigger_random_event(self):
+        event = random.choice(self.events)
+        event_ui.show_event(event)
+        
+    def handle_event_action(self, action):
+        if action == 'investigate_derelict':
+            if random.random() < 0.6:  # 60% chance of success
+                reward = random.randint(50, 200)
+                player_wallet.earn(reward)
+                print(f"You found {reward} credits in the derelict ship!")
+            else:
+                damage = random.randint(10, 30)
+                print(f"The ship was booby-trapped! You lose {damage} credits in repairs.")
+                player_wallet.spend(min(damage, player_wallet.credits))
+                
+        elif action == 'pay_pirates':
+            if player_wallet.can_afford(50):
+                player_wallet.spend(50)
+                print("The pirates take your credits and leave you alone.")
+            else:
+                print("You don't have enough credits! The pirates attack!")
+                self.handle_event_action('fight_pirates')
+                
+        elif action == 'fight_pirates':
+            if random.random() < 0.7:  # 70% chance to win based on upgrades
+                reward = random.randint(100, 300)
+                player_wallet.earn(reward)
+                print(f"You defeated the pirates and salvaged {reward} credits!")
+            else:
+                damage = random.randint(50, 100)
+                print(f"The pirates damaged your ship! Repair costs: {damage} credits.")
+                player_wallet.spend(min(damage, player_wallet.credits))
+                
+        elif action == 'escape_pirates':
+            if random.random() < 0.8:  # 80% chance to escape
+                print("You successfully escaped the pirates!")
+            else:
+                print("The pirates caught you anyway!")
+                self.handle_event_action('fight_pirates')
+                
+        elif action == 'trade_merchant':
+            # Simple trade - merchant buys all cargo at good prices
+            total_earned = 0
+            for commodity_name, quantity in list(player_cargo.cargo.items()):
+                sell_price = random.randint(30, 80)  # Better than planet prices
+                earnings = sell_price * quantity
+                total_earned += earnings
+                player_cargo.remove_cargo(commodity_name, quantity)
+                
+            if total_earned > 0:
+                player_wallet.earn(total_earned)
+                print(f"The merchant bought all your cargo for {total_earned} credits!")
+            else:
+                print("You have no cargo to trade.")
+                
+        elif action == 'navigate_asteroids':
+            print("You carefully navigate the asteroid field.")
+            # Small chance to find rare minerals
+            if random.random() < 0.3:
+                if player_cargo.can_add('minerals', 5):
+                    player_cargo.add_cargo('minerals', 5)
+                    print("You collected 5 rare minerals from the asteroids!")
+                    
+        elif action == 'rush_asteroids':
+            if random.random() < 0.5:  # 50% chance of damage
+                damage = random.randint(20, 60)
+                print(f"Your ship was damaged by asteroids! Repair costs: {damage} credits.")
+                player_wallet.spend(min(damage, player_wallet.credits))
+            else:
+                print("You made it through the asteroid field unscathed!")
+
+# Enhanced Combat System
+class CombatSystem:
+    def __init__(self):
+        self.player_health = 100
+        self.max_health = 100
+        self.weapon_level = 1
+        self.shield_level = 1
+        
+    def get_damage_output(self):
+        base_damage = 20
+        weapon_bonus = (self.weapon_level - 1) * 10
+        return base_damage + weapon_bonus
+        
+    def get_defense_rating(self):
+        base_defense = 5
+        shield_bonus = (self.shield_level - 1) * 5
+        return base_defense + shield_bonus
+        
+    def take_damage(self, damage):
+        actual_damage = max(1, damage - self.get_defense_rating())
+        self.player_health = max(0, self.player_health - actual_damage)
+        return actual_damage
+        
+    def heal(self, amount):
+        self.player_health = min(self.max_health, self.player_health + amount)
+        
+    def upgrade_weapons(self):
+        cost = self.weapon_level * 300
+        if player_wallet.can_afford(cost):
+            player_wallet.spend(cost)
+            self.weapon_level += 1
+            print(f"Weapons upgraded to level {self.weapon_level}!")
+            return True
+        return False
+        
+    def upgrade_shields(self):
+        cost = self.shield_level * 250
+        if player_wallet.can_afford(cost):
+            player_wallet.spend(cost)
+            self.shield_level += 1
+            print(f"Shields upgraded to level {self.shield_level}!")
+            return True
+        return False
+
+# Create systems
+random_event_system = RandomEventSystem()
+combat_system = CombatSystem()
 
 # Trading UI
 class TradingUI:
@@ -1128,7 +1321,7 @@ class UpgradeUI:
         # Instructions
         self.instructions = Text(
             parent=self.panel,
-            text='Press 1-3 to purchase upgrades\nESC to close',
+            text='Press 1-5 to purchase upgrades\nESC to close',
             position=(0, -0.35),
             scale=1,
             color=color.light_gray
@@ -1174,7 +1367,19 @@ class UpgradeUI:
         fuel_cost = ship_upgrades.upgrade_costs['fuel']
         fuel_affordable = "✓" if ship_upgrades.can_afford_upgrade('fuel') else "✗"
         upgrade_text += f"3. Fuel Efficiency - {fuel_cost} credits {fuel_affordable}\n"
-        upgrade_text += f"   Current Level: {ship_upgrades.fuel_efficiency} -> {ship_upgrades.fuel_efficiency + 1}\n"
+        upgrade_text += f"   Current Level: {ship_upgrades.fuel_efficiency} -> {ship_upgrades.fuel_efficiency + 1}\n\n"
+        
+        # Weapons upgrade
+        weapon_cost = combat_system.weapon_level * 300
+        weapon_affordable = "✓" if player_wallet.can_afford(weapon_cost) else "✗"
+        upgrade_text += f"4. Weapons Upgrade - {weapon_cost} credits {weapon_affordable}\n"
+        upgrade_text += f"   Current Level: {combat_system.weapon_level} -> {combat_system.weapon_level + 1}\n\n"
+        
+        # Shields upgrade
+        shield_cost = combat_system.shield_level * 250
+        shield_affordable = "✓" if player_wallet.can_afford(shield_cost) else "✗"
+        upgrade_text += f"5. Shields Upgrade - {shield_cost} credits {shield_affordable}\n"
+        upgrade_text += f"   Current Level: {combat_system.shield_level} -> {combat_system.shield_level + 1}\n"
         
         self.upgrade_list.text = upgrade_text
         
@@ -1200,24 +1405,130 @@ class UpgradeUI:
             else:
                 print("Cannot afford fuel efficiency upgrade!")
             return True
+        elif key == '4':
+            if combat_system.upgrade_weapons():
+                self.update_display()
+            else:
+                print("Cannot afford weapons upgrade!")
+            return True
+        elif key == '5':
+            if combat_system.upgrade_shields():
+                self.update_display()
+            else:
+                print("Cannot afford shields upgrade!")
+            return True
                 
         return False
 
 # Create upgrade UI
 upgrade_ui = UpgradeUI()
 
+# Event UI for random encounters
+class EventUI:
+    def __init__(self):
+        self.active = False
+        self.current_event = None
+        
+        # Main event panel
+        self.panel = Panel(
+            parent=camera.ui,
+            model='quad',
+            scale=(0.8, 0.6),
+            color=color.dark_gray,
+            enabled=False
+        )
+        
+        # Title
+        self.title = Text(
+            parent=self.panel,
+            text='SPACE ENCOUNTER',
+            position=(0, 0.2),
+            scale=1.5,
+            color=color.orange
+        )
+        
+        # Event description
+        self.description = Text(
+            parent=self.panel,
+            text='',
+            position=(0, 0.05),
+            scale=1,
+            color=color.white
+        )
+        
+        # Option buttons
+        self.option_buttons = []
+        
+    def show_event(self, event):
+        self.active = True
+        self.current_event = event
+        self.panel.enabled = True
+        
+        # Update event info
+        self.title.text = event['name'].upper()
+        self.description.text = event['description']
+        
+        # Clear existing buttons
+        for button in self.option_buttons:
+            destroy(button)
+        self.option_buttons.clear()
+        
+        # Create option buttons
+        for i, option in enumerate(event['options']):
+            button = Button(
+                parent=self.panel,
+                text=option['text'],
+                color=color.azure.tint(-.2),
+                highlight_color=color.azure.tint(-.1),
+                pressed_color=color.azure.tint(-.3),
+                scale=(0.6, 0.08),
+                position=(0, -0.05 - (i * 0.12))
+            )
+            
+            # Store the action in the button
+            button.action = option['action']
+            button.on_click = lambda action=option['action']: self.handle_option(action)
+            self.option_buttons.append(button)
+        
+        # Pause game and show cursor
+        mouse.locked = False
+        mouse.visible = True
+        
+    def handle_option(self, action):
+        if action != 'ignore':
+            random_event_system.handle_event_action(action)
+        
+        self.hide()
+        
+    def hide(self):
+        self.active = False
+        self.current_event = None
+        self.panel.enabled = False
+        
+        # Clear buttons
+        for button in self.option_buttons:
+            destroy(button)
+        self.option_buttons.clear()
+        
+        # Resume game and hide cursor
+        mouse.locked = True
+        mouse.visible = False
+
+# Create event UI
+event_ui = EventUI()
+
 def update():
     global nearby_planet
     
-    if not paused and not trading_ui.active and not upgrade_ui.active:
+    if not paused and not trading_ui.active and not upgrade_ui.active and not event_ui.active:
         if scene_manager.current_state == GameState.SPACE:
-        # Check if player is near any planet
-        nearby_planet = None
-        for planet in planets:
-            if planet.is_player_in_landing_range(player.position):
-                nearby_planet = planet
-                break
-        
+            # Check if player is near any planet
+            nearby_planet = None
+            for planet in planets:
+                if planet.is_player_in_landing_range(player.position):
+                    nearby_planet = planet
+                    break
+            
             # Show/hide landing prompt based on proximity
             if nearby_planet and not landing_prompt.enabled:
                 landing_prompt.enabled = True
@@ -1236,6 +1547,10 @@ def update():
                 player.enabled = True
                 mouse.locked = True
                 mouse.visible = False
+                
+            # Check for random events when not near planets and not in landing prompt
+            if not nearby_planet and not landing_prompt.enabled:
+                random_event_system.check_for_event()
                 
         elif scene_manager.current_state == GameState.TOWN:
             # Check if player is near trading post in town
@@ -1359,7 +1674,7 @@ def input(key):
                     planet_name = "Local Trading Post"
                     if planet_name not in market_system.planet_markets:
                         market_system.generate_market_for_planet(planet_name, "generic")
-                                         trading_ui.show(planet_name)
+                    trading_ui.show(planet_name)
             else:
                 print("You need to be closer to the trading post!")
     
