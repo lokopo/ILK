@@ -223,12 +223,20 @@ class CharacterDevelopment:
         
     def gain_experience(self, skill_type, amount):
         if skill_type in self.experience_points:
+            # Implement skill cap at 100 to prevent overflow
+            if self.skills[skill_type] >= 100.0:
+                return  # Already at maximum skill level
+                
             self.experience_points[skill_type] += amount
             required_exp = int(self.skills[skill_type] * 100)
             if self.experience_points[skill_type] >= required_exp:
-                self.skills[skill_type] += 0.5
+                self.skills[skill_type] = min(100.0, self.skills[skill_type] + 0.5)
                 self.experience_points[skill_type] = 0
-                print(f"📈 {skill_type.value} skill improved to {self.skills[skill_type]:.1f}!")
+                
+                if self.skills[skill_type] < 100.0:
+                    print(f"📈 {skill_type.value} skill improved to {self.skills[skill_type]:.1f}!")
+                else:
+                    print(f"🎯 {skill_type.value} skill mastered at maximum level (100.0)!")
                 
     def advance_time(self, days):
         years_passed = days / 365.0
@@ -309,7 +317,7 @@ class Commodity:
         self.category = category
         
     def get_price(self, planet_type="generic", supply_demand_modifier=1.0):
-        """Calculate price based on planet type and market conditions"""
+        """Calculate price based on planet type and market conditions with stability"""
         price_modifiers = {
             "agricultural": {"food": 0.7, "technology": 1.3, "minerals": 1.1, "luxury": 1.2},
             "industrial": {"minerals": 0.8, "technology": 0.9, "food": 1.4, "luxury": 1.1},
@@ -324,8 +332,14 @@ class Commodity:
         }
         
         modifier = price_modifiers.get(planet_type, {}).get(self.category, 1.0)
-        final_price = self.base_price * modifier * supply_demand_modifier
-        return max(1, int(final_price))  # Minimum price of 1 credit
+        
+        # Clamp supply_demand_modifier to prevent extreme price swings
+        stable_modifier = max(0.3, min(3.0, supply_demand_modifier))
+        
+        final_price = self.base_price * modifier * stable_modifier
+        # More reasonable minimum price based on base price
+        min_price = max(1, int(self.base_price * 0.2))
+        return max(min_price, int(final_price))
 
 class CargoSystem:
     def __init__(self, max_capacity=100):
@@ -434,7 +448,7 @@ class PlanetEconomy:
                 self.stockpiles[commodity] = 0
                 
     def daily_economic_update(self):
-        """Process daily production, consumption, and trade effects"""
+        """Process daily production, consumption, and trade effects with stability"""
         
         # 1. PRODUCTION PHASE
         for commodity, amount in self.daily_production.items():
@@ -444,39 +458,51 @@ class PlanetEconomy:
             if self.blockaded:
                 production = int(production * (0.5 - min(0.4, self.blockade_days * 0.05)))
                 
-            self.stockpiles[commodity] += production
+            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0) + production
             
-        # 2. CONSUMPTION PHASE
+        # 2. CONSUMPTION PHASE (BALANCED)
         for commodity, amount in self.daily_consumption.items():
+            current_stock = self.stockpiles.get(commodity, 0)
             consumption = amount
             
-            # Starvation effects - increase consumption of scarce goods
-            if self.stockpiles[commodity] < consumption * 3:  # Less than 3 days supply
-                consumption = int(consumption * 1.2)  # Panic buying
+            # Scale consumption based on availability to prevent negative stockpiles
+            if current_stock < consumption:
+                # Emergency rationing - reduce consumption to match supply
+                consumption = max(int(current_stock * 0.8), 0)  # Use 80% of available stock
                 
-            # Can't consume more than available
-            actual_consumption = min(consumption, self.stockpiles[commodity])
-            self.stockpiles[commodity] -= actual_consumption
+            # Starvation effects only if we have some stock
+            if current_stock > 0 and current_stock < consumption * 3:  # Less than 3 days supply
+                consumption = min(consumption, int(current_stock * 0.9))  # Conservative consumption
+                
+            # Safe consumption - never go below zero
+            actual_consumption = min(consumption, current_stock)
+            self.stockpiles[commodity] = max(0, current_stock - actual_consumption)
             
-            # Track shortages for realistic pricing
-            if actual_consumption < consumption:
-                if consumption > 0:  # Prevent division by zero
-                    shortage_ratio = actual_consumption / consumption
-                    print(f"{self.planet_name} experiencing {commodity} shortage! ({shortage_ratio:.1%} of needs met)")
-                else:
-                    print(f"{self.planet_name} experiencing {commodity} shortage! (No consumption data)")
+            # Track shortages for realistic pricing (but less spam)
+            if actual_consumption < amount and amount > 0:  # Original consumption target not met
+                shortage_ratio = actual_consumption / amount
+                if shortage_ratio < 0.5:  # Only log severe shortages
+                    print(f"{self.planet_name} severe {commodity} shortage! ({shortage_ratio:.1%} needs met)")
                 
-        # 3. BLOCKADE EFFECTS
+        # 3. EMERGENCY SUPPLY ADJUSTMENT
+        # If stockpiles are critically low, temporarily boost production
+        for commodity in self.stockpiles:
+            if self.stockpiles[commodity] < 10:  # Critical shortage
+                emergency_production = self.daily_production.get(commodity, 0) * 0.5
+                if emergency_production > 0:
+                    self.stockpiles[commodity] += int(emergency_production)
+                
+        # 4. BLOCKADE EFFECTS (REDUCED IMPACT)
         if self.blockaded:
             self.blockade_days += 1
-            # Increased consumption due to hoarding and waste
+            # Reduced waste during blockade to prevent economic collapse
             for commodity in self.stockpiles:
-                waste = int(self.stockpiles[commodity] * 0.02)  # 2% daily waste during blockade
+                waste = max(1, int(self.stockpiles[commodity] * 0.01))  # 1% daily waste (reduced)
                 self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - waste)
         else:
             self.blockade_days = 0
             
-        # 4. RESET DAILY TRADE TRACKING
+        # 5. RESET DAILY TRADE TRACKING
         self.trade_volume_today = {}
         
     def get_available_supply(self, commodity):
@@ -812,13 +838,19 @@ class EnhancedCrewMember:
         return max(0, base_skill * (1 - fatigue_penalty - health_penalty))
         
     def gain_experience(self, skill_type, amount):
-        """Gain experience in a skill"""
+        """Gain experience in a skill with cap"""
         self.experience += amount
         if skill_type in self.skills:
-            # Chance to improve skill
+            # Chance to improve skill with better cap
             if random.random() < 0.1:  # 10% chance
-                self.skills[skill_type] = min(20, self.skills[skill_type] + 1)
-                print(f"{self.name} improved their {skill_type} skill!")
+                old_skill = self.skills[skill_type]
+                self.skills[skill_type] = min(50, self.skills[skill_type] + 1)  # Cap at 50 for crew
+                
+                if self.skills[skill_type] > old_skill:
+                    if self.skills[skill_type] < 50:
+                        print(f"{self.name} improved their {skill_type} skill to {self.skills[skill_type]}!")
+                    else:
+                        print(f"{self.name} has mastered {skill_type} at maximum level!")
 
 class RealisticShipSystems:
     def __init__(self):
