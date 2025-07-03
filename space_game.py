@@ -900,6 +900,918 @@ class EnhancedManufacturing:
 # Create global manufacturing system
 enhanced_manufacturing = EnhancedManufacturing()
 
+# ===== PERSISTENT MILITARY & POLITICAL SYSTEMS =====
+
+class MilitaryShipType(Enum):
+    PATROL = "PATROL"
+    ESCORT = "ESCORT"
+    BLOCKADE = "BLOCKADE"
+    ASSAULT = "ASSAULT"
+    CAPITAL = "CAPITAL"
+
+class WeatherType(Enum):
+    SOLAR_STORM = "SOLAR_STORM"
+    ASTEROID_FIELD = "ASTEROID_FIELD"
+    NEBULA = "NEBULA"
+    ION_STORM = "ION_STORM"
+    CLEAR = "CLEAR"
+
+@dataclass
+class WeatherEvent:
+    weather_type: WeatherType
+    position: tuple  # (x, y, z)
+    radius: float
+    intensity: float  # 0.0 to 1.0
+    duration: float  # seconds
+    start_time: float
+    
+class MilitaryShip(Entity):
+    """Physical military ships that enforce faction control"""
+    
+    def __init__(self, faction_id, ship_type, position, patrol_radius=100):
+        super().__init__(
+            model='cube',
+            position=position,
+            scale=(1.5, 0.8, 3.0),  # Military ship shape
+            color=self.get_faction_color(faction_id)
+        )
+        
+        self.faction_id = faction_id
+        self.ship_type = ship_type
+        self.patrol_radius = patrol_radius
+        self.target_position = position
+        self.speed = 8.0
+        self.weapons_strength = 50
+        self.shields = 100
+        self.patrol_center = position
+        self.last_patrol_change = 0
+        self.engagement_range = 50
+        self.hostile_factions = []
+        
+        # Set hostile factions based on relationships
+        if faction_id in faction_system.factions:
+            for other_faction, relationship in faction_system.factions[faction_id].relationships.items():
+                if relationship < -50:  # Hostile relationship
+                    self.hostile_factions.append(other_faction)
+        
+    def get_faction_color(self, faction_id):
+        """Get color based on faction"""
+        faction_colors = {
+            'terran_federation': color.blue,
+            'mars_republic': color.red,
+            'jupiter_consortium': color.orange,
+            'outer_rim_pirates': color.dark_gray,
+            'merchant_guild': color.green,
+            'independent': color.white
+        }
+        return faction_colors.get(faction_id, color.gray)
+        
+    def update(self):
+        if not paused:
+            current_time = time.time()
+            
+            # Patrol behavior
+            if self.ship_type == MilitaryShipType.PATROL:
+                self.patrol_behavior(current_time)
+            elif self.ship_type == MilitaryShipType.BLOCKADE:
+                self.blockade_behavior()
+            elif self.ship_type == MilitaryShipType.ESCORT:
+                self.escort_behavior()
+                
+            # Move toward target
+            if hasattr(self, 'target_position'):
+                direction = (self.target_position - self.position).normalized()
+                self.position += direction * self.speed * time.dt
+                
+            # Check for hostiles
+            self.check_for_hostiles()
+            
+    def patrol_behavior(self, current_time):
+        """Patrol around assigned area"""
+        if current_time - self.last_patrol_change > 30:  # Change direction every 30 seconds
+            # Pick new patrol point within radius
+            angle = random.uniform(0, 2 * 3.14159)
+            distance = random.uniform(20, self.patrol_radius)
+            
+            offset_x = distance * math.cos(angle)
+            offset_z = distance * math.sin(angle)
+            
+            self.target_position = self.patrol_center + Vec3(offset_x, 0, offset_z)
+            self.last_patrol_change = current_time
+            
+    def blockade_behavior(self):
+        """Stay in position to block access"""
+        # Blockade ships stay near their assigned position
+        if (self.position - self.patrol_center).length() > 20:
+            self.target_position = self.patrol_center
+            
+    def escort_behavior(self):
+        """Follow and protect cargo ships"""
+        # Find nearby friendly cargo ships to escort
+        for cargo_ship in unified_transport_system.cargo_ships:
+            if hasattr(cargo_ship, 'position'):
+                distance = (self.position - cargo_ship.position).length()
+                if distance < 100:  # Within escort range
+                    self.target_position = cargo_ship.position + Vec3(10, 0, 10)  # Stay nearby
+                    break
+                    
+    def check_for_hostiles(self):
+        """Check for hostile ships and player"""
+        # Check player faction standing
+        if scene_manager.current_state == GameState.SPACE and scene_manager.space_controller:
+            player_pos = scene_manager.space_controller.position
+            distance = (self.position - player_pos).length()
+            
+            if distance < self.engagement_range:
+                player_rep = faction_system.player_reputation.get(self.faction_id, 0)
+                if player_rep < -30:  # Hostile to player
+                    self.engage_target(player_pos, "Player")
+                    
+        # Check for hostile faction ships
+        all_ships = (unified_transport_system.cargo_ships + unified_transport_system.raiders + 
+                    unified_transport_system.message_ships)
+        
+        for ship in all_ships:
+            if hasattr(ship, 'position') and hasattr(ship, 'faction_id'):
+                if ship.faction_id in self.hostile_factions:
+                    distance = (self.position - ship.position).length()
+                    if distance < self.engagement_range:
+                        self.engage_target(ship.position, f"{ship.faction_id} ship")
+                        
+    def engage_target(self, target_pos, target_name):
+        """Engage hostile target"""
+        print(f"🚨 {self.faction_id} {self.ship_type.value} engaging {target_name}!")
+        
+        # Move to intercept
+        self.target_position = target_pos
+        
+        # Apply damage if close enough
+        if (self.position - target_pos).length() < 20:
+            if target_name == "Player":
+                damage = random.randint(10, 25)
+                combat_system.take_damage(damage)
+                print(f"💥 Military ship hit player for {damage} damage!")
+            
+class WeatherSystem:
+    """Dynamic weather events that affect gameplay"""
+    
+    def __init__(self):
+        self.active_weather = []
+        self.last_weather_spawn = 0
+        self.weather_spawn_interval = 180  # 3 minutes between weather events
+        
+    def update(self):
+        current_time = time.time()
+        
+        # Remove expired weather
+        self.active_weather = [w for w in self.active_weather 
+                             if current_time - w.start_time < w.duration]
+        
+        # Spawn new weather events
+        if current_time - self.last_weather_spawn > self.weather_spawn_interval:
+            if random.random() < 0.3:  # 30% chance
+                self.spawn_weather_event()
+                self.last_weather_spawn = current_time
+                
+        # Update weather effects
+        self.apply_weather_effects()
+        
+    def spawn_weather_event(self):
+        """Spawn a new weather event"""
+        weather_types = [WeatherType.SOLAR_STORM, WeatherType.ASTEROID_FIELD, 
+                        WeatherType.NEBULA, WeatherType.ION_STORM]
+        
+        weather_type = random.choice(weather_types)
+        
+        # Random position in space
+        position = (
+            random.uniform(-400, 400),
+            random.uniform(-100, 100),
+            random.uniform(-400, 400)
+        )
+        
+        radius = random.uniform(50, 150)
+        intensity = random.uniform(0.3, 1.0)
+        duration = random.uniform(300, 900)  # 5-15 minutes
+        
+        weather_event = WeatherEvent(
+            weather_type=weather_type,
+            position=position,
+            radius=radius,
+            intensity=intensity,
+            duration=duration,
+            start_time=time.time()
+        )
+        
+        self.active_weather.append(weather_event)
+        
+        print(f"🌩️ {weather_type.value} spawned at {position} (radius: {radius:.0f})")
+        
+    def apply_weather_effects(self):
+        """Apply weather effects to player and ships"""
+        if scene_manager.current_state != GameState.SPACE:
+            return
+            
+        player_pos = scene_manager.space_controller.position
+        
+        for weather in self.active_weather:
+            weather_pos = Vec3(*weather.position)
+            distance = (player_pos - weather_pos).length()
+            
+            if distance < weather.radius:
+                # Player is in weather event
+                effect_strength = (1.0 - distance / weather.radius) * weather.intensity
+                self.apply_weather_effect_to_player(weather.weather_type, effect_strength)
+                
+    def apply_weather_effect_to_player(self, weather_type, strength):
+        """Apply specific weather effects to player"""
+        if weather_type == WeatherType.SOLAR_STORM:
+            # Damage electronics and reduce fuel efficiency
+            if random.random() < 0.001 * strength:  # Small chance per frame
+                ship_systems.components[ComponentType.SENSORS].take_damage(1)
+                print("⚡ Solar storm damaged sensors!")
+                
+        elif weather_type == WeatherType.ASTEROID_FIELD:
+            # Chance of hull damage
+            if random.random() < 0.0005 * strength:
+                ship_systems.components[ComponentType.HULL].take_damage(5)
+                print("☄️ Asteroid impact damaged hull!")
+                
+        elif weather_type == WeatherType.NEBULA:
+            # Reduce sensor range and speed
+            ship_systems.components[ComponentType.SENSORS].efficiency = max(0.5, 
+                ship_systems.components[ComponentType.SENSORS].efficiency - 0.001 * strength)
+                
+        elif weather_type == WeatherType.ION_STORM:
+            # Disrupt engines and electronics
+            if random.random() < 0.0008 * strength:
+                ship_systems.components[ComponentType.ENGINE].take_damage(2)
+                print("⚡ Ion storm disrupted engines!")
+
+class FactionMilitaryManager:
+    """Manages military ships and territorial control for all factions"""
+    
+    def __init__(self):
+        self.military_ships = []
+        self.territorial_claims = {}  # faction_id -> list of planet names
+        self.active_conflicts = []  # list of (faction1, faction2, conflict_type)
+        self.blockade_zones = {}  # planet_name -> list of blockading ships
+        
+    def initialize_military_presence(self):
+        """Create initial military ships for all factions"""
+        print("🛡️ Deploying faction military forces...")
+        
+        for faction_id, faction in faction_system.factions.items():
+            if faction_id == 'independent':
+                continue  # Independents don't have organized military
+                
+            # Create patrol ships
+            for _ in range(random.randint(2, 5)):
+                position = Vec3(
+                    random.uniform(-300, 300),
+                    random.uniform(-50, 50),
+                    random.uniform(-300, 300)
+                )
+                
+                patrol_ship = MilitaryShip(faction_id, MilitaryShipType.PATROL, position)
+                self.military_ships.append(patrol_ship)
+                
+        # Establish territorial claims
+        self.establish_territorial_claims()
+        
+        # Create some initial conflicts
+        self.create_initial_conflicts()
+        
+    def establish_territorial_claims(self):
+        """Assign planets to factions based on their influence"""
+        for planet in planets:
+            # Assign planets to factions based on type and random factors
+            if planet.planet_type == "industrial":
+                claiming_faction = random.choice(['terran_federation', 'mars_republic'])
+            elif planet.planet_type == "tech":
+                claiming_faction = random.choice(['terran_federation', 'jupiter_consortium'])
+            elif planet.planet_type == "mining":
+                claiming_faction = random.choice(['mars_republic', 'jupiter_consortium'])
+            else:
+                claiming_faction = random.choice(list(faction_system.factions.keys()))
+                
+            if claiming_faction not in self.territorial_claims:
+                self.territorial_claims[claiming_faction] = []
+            self.territorial_claims[claiming_faction].append(planet.name)
+            
+            # Add faction color indicator to planet
+            planet.faction_id = claiming_faction
+            
+    def create_initial_conflicts(self):
+        """Create some conflicts between factions"""
+        potential_conflicts = [
+            ('terran_federation', 'mars_republic'),
+            ('jupiter_consortium', 'outer_rim_pirates'),
+            ('mars_republic', 'outer_rim_pirates')
+        ]
+        
+        for faction1, faction2 in potential_conflicts:
+            if random.random() < 0.4:  # 40% chance of conflict
+                self.start_conflict(faction1, faction2)
+                
+    def start_conflict(self, faction1, faction2):
+        """Start a conflict between two factions"""
+        self.active_conflicts.append((faction1, faction2, "territorial_dispute"))
+        
+        print(f"⚔️ Conflict started: {faction1} vs {faction2}")
+        
+        # Create blockades
+        self.create_blockades(faction1, faction2)
+        
+    def create_blockades(self, attacking_faction, defending_faction):
+        """Create physical blockades around enemy planets"""
+        if defending_faction in self.territorial_claims:
+            for planet_name in self.territorial_claims[defending_faction]:
+                if random.random() < 0.3:  # 30% chance to blockade each planet
+                    self.establish_blockade(attacking_faction, planet_name)
+                    
+    def establish_blockade(self, faction_id, planet_name):
+        """Establish a physical blockade around a planet"""
+        # Find the planet
+        target_planet = None
+        for planet in planets:
+            if planet.name == planet_name:
+                target_planet = planet
+                break
+                
+        if not target_planet:
+            return
+            
+        # Create blockade ships around the planet
+        blockade_ships = []
+        num_ships = random.randint(3, 6)
+        
+        for i in range(num_ships):
+            angle = (2 * 3.14159 * i) / num_ships
+            distance = target_planet.landing_radius + 30
+            
+            position = target_planet.position + Vec3(
+                distance * math.cos(angle),
+                random.uniform(-10, 10),
+                distance * math.sin(angle)
+            )
+            
+            blockade_ship = MilitaryShip(faction_id, MilitaryShipType.BLOCKADE, position)
+            blockade_ship.blockaded_planet = target_planet
+            blockade_ships.append(blockade_ship)
+            self.military_ships.append(blockade_ship)
+            
+        self.blockade_zones[planet_name] = blockade_ships
+        
+        print(f"🚫 {faction_id} established blockade around {planet_name} with {num_ships} ships")
+        
+    def update(self):
+        """Update all military operations"""
+        # Update all military ships
+        for ship in self.military_ships[:]:
+            ship.update()
+            
+        # Check for blockade effectiveness
+        self.update_blockades()
+        
+        # Evolve conflicts
+        self.update_conflicts()
+        
+    def update_blockades(self):
+        """Update blockade status and prevent access"""
+        for planet_name, blockade_ships in self.blockade_zones.items():
+            # Remove destroyed ships
+            active_ships = [ship for ship in blockade_ships if ship in self.military_ships]
+            
+            if len(active_ships) < len(blockade_ships):
+                self.blockade_zones[planet_name] = active_ships
+                
+            # If no ships left, blockade is broken
+            if not active_ships:
+                print(f"🔓 Blockade around {planet_name} has been broken!")
+                del self.blockade_zones[planet_name]
+                
+    def update_conflicts(self):
+        """Update ongoing conflicts"""
+        for conflict in self.active_conflicts[:]:
+            faction1, faction2, conflict_type = conflict
+            
+            # Random chance to escalate or resolve
+            if random.random() < 0.001:  # Very small chance per frame
+                if random.random() < 0.5:
+                    self.escalate_conflict(faction1, faction2)
+                else:
+                    self.resolve_conflict(faction1, faction2)
+                    
+    def escalate_conflict(self, faction1, faction2):
+        """Escalate conflict by deploying more military"""
+        print(f"🔥 Conflict escalating: {faction1} vs {faction2}")
+        
+        # Deploy additional military ships
+        for faction_id in [faction1, faction2]:
+            position = Vec3(
+                random.uniform(-200, 200),
+                random.uniform(-50, 50),
+                random.uniform(-200, 200)
+            )
+            
+            assault_ship = MilitaryShip(faction_id, MilitaryShipType.ASSAULT, position)
+            self.military_ships.append(assault_ship)
+            
+    def resolve_conflict(self, faction1, faction2):
+        """Resolve conflict and remove blockades"""
+        print(f"🕊️ Peace treaty signed: {faction1} and {faction2}")
+        
+        # Remove this conflict
+        self.active_conflicts = [(f1, f2, t) for f1, f2, t in self.active_conflicts 
+                               if not ((f1 == faction1 and f2 == faction2) or 
+                                      (f1 == faction2 and f2 == faction1))]
+        
+        # Remove blockades between these factions
+        to_remove = []
+        for planet_name, blockade_ships in self.blockade_zones.items():
+            if blockade_ships and blockade_ships[0].faction_id in [faction1, faction2]:
+                # Check if blockading the other faction's planet
+                for planet in planets:
+                    if (planet.name == planet_name and 
+                        hasattr(planet, 'faction_id') and 
+                        planet.faction_id in [faction1, faction2]):
+                        to_remove.append(planet_name)
+                        break
+                        
+        for planet_name in to_remove:
+            for ship in self.blockade_zones[planet_name]:
+                if ship in self.military_ships:
+                    self.military_ships.remove(ship)
+                    destroy(ship)
+            del self.blockade_zones[planet_name]
+            
+    def is_planet_blockaded(self, planet_name):
+        """Check if a planet is currently blockaded"""
+        return planet_name in self.blockade_zones and len(self.blockade_zones[planet_name]) > 0
+        
+    def can_player_access_planet(self, planet_name):
+        """Check if player can access a planet (not blockaded by hostile factions)"""
+        if not self.is_planet_blockaded(planet_name):
+            return True
+            
+        # Check if blockading faction is hostile to player
+        blockade_ships = self.blockade_zones[planet_name]
+        if blockade_ships:
+            blockading_faction = blockade_ships[0].faction_id
+            player_rep = faction_system.player_reputation.get(blockading_faction, 0)
+            return player_rep > -30  # Can access if not too hostile
+            
+        return True
+
+# ===== ADVANCED MISSION & CONTRACT SYSTEM =====
+
+class MissionType(Enum):
+    CARGO_DELIVERY = "CARGO_DELIVERY"
+    PASSENGER_TRANSPORT = "PASSENGER_TRANSPORT"
+    EXPLORATION = "EXPLORATION"
+    MILITARY_ESCORT = "MILITARY_ESCORT"
+    MINING_OPERATION = "MINING_OPERATION"
+    RESEARCH = "RESEARCH"
+    DIPLOMACY = "DIPLOMACY"
+    ASSASSINATION = "ASSASSINATION"
+    RESCUE = "RESCUE"
+    BLOCKADE_RUNNING = "BLOCKADE_RUNNING"
+
+class ContractStatus(Enum):
+    AVAILABLE = "AVAILABLE"
+    ACCEPTED = "ACCEPTED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+
+@dataclass
+class Contract:
+    contract_id: str
+    mission_type: MissionType
+    client_faction: str
+    title: str
+    description: str
+    objectives: list
+    rewards: dict  # credits, reputation, items
+    penalties: dict  # reputation loss, credits lost
+    time_limit: float  # seconds
+    difficulty: int  # 1-5
+    requirements: dict  # crew skills, ship components, reputation
+    status: ContractStatus
+    start_time: float
+    completion_time: float = None
+    
+class DynamicContractSystem:
+    """Generates contracts based on current galaxy state"""
+    
+    def __init__(self):
+        self.available_contracts = []
+        self.active_contracts = []
+        self.completed_contracts = []
+        self.last_generation = 0
+        self.generation_interval = 120  # 2 minutes
+        
+    def update(self):
+        current_time = time.time()
+        
+        # Generate new contracts periodically
+        if current_time - self.last_generation > self.generation_interval:
+            self.generate_contracts()
+            self.last_generation = current_time
+            
+        # Update active contracts
+        self.update_active_contracts()
+        
+        # Remove expired contracts
+        self.remove_expired_contracts()
+        
+    def generate_contracts(self):
+        """Generate contracts based on current galaxy state"""
+        # Generate blockade running missions if blockades exist
+        for planet_name in military_manager.blockade_zones:
+            if random.random() < 0.7:  # 70% chance
+                self.generate_blockade_running_contract(planet_name)
+                
+        # Generate escort missions for valuable cargo
+        if unified_transport_system.cargo_ships:
+            if random.random() < 0.3:  # 30% chance
+                self.generate_escort_contract()
+                
+        # Generate exploration contracts for unexplored regions
+        if random.random() < 0.2:  # 20% chance
+            self.generate_exploration_contract()
+            
+        # Generate diplomatic missions based on faction relations
+        if military_manager.active_conflicts:
+            if random.random() < 0.4:  # 40% chance
+                self.generate_diplomatic_contract()
+                
+        # Generate supply missions based on planet needs
+        for planet_name, economy in enhanced_planet_economies.items():
+            critical_needs = [commodity for commodity, days in economy.calculate_needs().items() 
+                            if days < 5]  # Critical shortage
+            if critical_needs and random.random() < 0.5:
+                self.generate_supply_contract(planet_name, critical_needs)
+                
+    def generate_blockade_running_contract(self, planet_name):
+        """Generate contract to break through blockade"""
+        blockade_ships = military_manager.blockade_zones[planet_name]
+        blockading_faction = blockade_ships[0].faction_id if blockade_ships else "unknown"
+        
+        # Find faction that owns the planet
+        planet_faction = None
+        for planet in planets:
+            if planet.name == planet_name and hasattr(planet, 'faction_id'):
+                planet_faction = planet.faction_id
+                break
+                
+        if not planet_faction:
+            return
+            
+        contract = Contract(
+            contract_id=f"blockade_{planet_name}_{int(time.time())}",
+            mission_type=MissionType.BLOCKADE_RUNNING,
+            client_faction=planet_faction,
+            title=f"Break Blockade of {planet_name}",
+            description=f"The {blockading_faction} has blockaded {planet_name}. "
+                       f"We need supplies delivered urgently. High risk, high reward.",
+            objectives=[
+                f"Deliver critical supplies to {planet_name}",
+                f"Avoid or defeat {len(blockade_ships)} blockade ships",
+                "Return safely"
+            ],
+            rewards={
+                'credits': 50000 + len(blockade_ships) * 10000,
+                'reputation': {planet_faction: 25, blockading_faction: -15}
+            },
+            penalties={
+                'reputation': {planet_faction: -10}
+            },
+            time_limit=3600,  # 1 hour
+            difficulty=4,
+            requirements={
+                'min_reputation': {planet_faction: -20},
+                'ship_components': ['SHIELDS', 'WEAPONS']
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New blockade running contract: {contract.title}")
+        
+    def generate_escort_contract(self):
+        """Generate contract to escort valuable cargo"""
+        cargo_ship = random.choice(unified_transport_system.cargo_ships)
+        if not hasattr(cargo_ship, 'cargo_manifest'):
+            return
+            
+        cargo_value = sum(cargo_ship.cargo_manifest.values()) * 1000  # Estimate value
+        
+        contract = Contract(
+            contract_id=f"escort_{cargo_ship.ship_id}_{int(time.time())}",
+            mission_type=MissionType.MILITARY_ESCORT,
+            client_faction='merchant_guild',
+            title=f"Escort Cargo Ship {cargo_ship.ship_id}",
+            description=f"Escort valuable cargo ship from {cargo_ship.origin_planet} "
+                       f"to {cargo_ship.destination_planet}. Pirates are active in the area.",
+            objectives=[
+                f"Escort cargo ship {cargo_ship.ship_id}",
+                "Defend against pirate attacks",
+                "Ensure safe delivery"
+            ],
+            rewards={
+                'credits': int(cargo_value * 0.1),  # 10% of cargo value
+                'reputation': {'merchant_guild': 10}
+            },
+            penalties={
+                'reputation': {'merchant_guild': -20}
+            },
+            time_limit=1800,  # 30 minutes
+            difficulty=3,
+            requirements={
+                'ship_components': ['WEAPONS', 'SHIELDS']
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New escort contract: {contract.title}")
+        
+    def generate_exploration_contract(self):
+        """Generate exploration contract for unknown regions"""
+        # Pick random coordinates far from planets
+        target_pos = Vec3(
+            random.uniform(-500, 500),
+            random.uniform(-200, 200),
+            random.uniform(-500, 500)
+        )
+        
+        # Make sure it's far from existing planets
+        min_distance = min((target_pos - planet.position).length() for planet in planets)
+        if min_distance < 100:
+            return  # Too close to existing planets
+            
+        contract = Contract(
+            contract_id=f"explore_{int(time.time())}",
+            mission_type=MissionType.EXPLORATION,
+            client_faction='terran_federation',
+            title="Deep Space Exploration",
+            description=f"Explore coordinates ({target_pos.x:.0f}, {target_pos.y:.0f}, {target_pos.z:.0f}) "
+                       f"and report any findings. Unknown dangers may be present.",
+            objectives=[
+                f"Travel to coordinates ({target_pos.x:.0f}, {target_pos.y:.0f}, {target_pos.z:.0f})",
+                "Scan the area for 60 seconds",
+                "Return with exploration data"
+            ],
+            rewards={
+                'credits': 25000,
+                'reputation': {'terran_federation': 15}
+            },
+            penalties={
+                'reputation': {'terran_federation': -5}
+            },
+            time_limit=2400,  # 40 minutes
+            difficulty=2,
+            requirements={
+                'ship_components': ['SENSORS', 'FUEL_TANK']
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New exploration contract: {contract.title}")
+        
+    def generate_diplomatic_contract(self):
+        """Generate diplomatic mission to resolve conflicts"""
+        if not military_manager.active_conflicts:
+            return
+            
+        faction1, faction2, conflict_type = random.choice(military_manager.active_conflicts)
+        
+        contract = Contract(
+            contract_id=f"diplomacy_{faction1}_{faction2}_{int(time.time())}",
+            mission_type=MissionType.DIPLOMACY,
+            client_faction='independent',
+            title=f"Peace Negotiations: {faction1} vs {faction2}",
+            description=f"Mediate peace talks between {faction1} and {faction2}. "
+                       f"Both sides must agree to ceasefire terms.",
+            objectives=[
+                f"Meet with {faction1} representatives",
+                f"Meet with {faction2} representatives",
+                "Negotiate ceasefire agreement",
+                "Ensure both sides sign treaty"
+            ],
+            rewards={
+                'credits': 75000,
+                'reputation': {faction1: 20, faction2: 20, 'independent': 30}
+            },
+            penalties={
+                'reputation': {faction1: -10, faction2: -10}
+            },
+            time_limit=7200,  # 2 hours
+            difficulty=5,
+            requirements={
+                'min_reputation': {faction1: 0, faction2: 0},
+                'crew_skills': {'leadership': 3}
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New diplomatic contract: {contract.title}")
+        
+    def generate_supply_contract(self, planet_name, critical_commodities):
+        """Generate urgent supply delivery contract"""
+        commodity = random.choice(critical_commodities)
+        quantity = random.randint(50, 200)
+        
+        # Find a planet that has this commodity
+        supplier_planet = None
+        for other_planet, economy in enhanced_planet_economies.items():
+            if (other_planet != planet_name and 
+                economy.stockpiles.get(commodity, 0) > quantity):
+                supplier_planet = other_planet
+                break
+                
+        if not supplier_planet:
+            return
+            
+        contract = Contract(
+            contract_id=f"supply_{planet_name}_{commodity}_{int(time.time())}",
+            mission_type=MissionType.CARGO_DELIVERY,
+            client_faction='merchant_guild',
+            title=f"Emergency Supply Run: {commodity} to {planet_name}",
+            description=f"{planet_name} has a critical shortage of {commodity}. "
+                       f"Pick up {quantity} units from {supplier_planet} and deliver urgently.",
+            objectives=[
+                f"Travel to {supplier_planet}",
+                f"Purchase {quantity} units of {commodity}",
+                f"Deliver to {planet_name} within time limit"
+            ],
+            rewards={
+                'credits': quantity * 100,  # Good price per unit
+                'reputation': {'merchant_guild': 10}
+            },
+            penalties={
+                'reputation': {'merchant_guild': -15}
+            },
+            time_limit=1800,  # 30 minutes
+            difficulty=2,
+            requirements={
+                'cargo_capacity': quantity
+            },
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time()
+        )
+        
+        self.available_contracts.append(contract)
+        print(f"📋 New supply contract: {contract.title}")
+        
+    def update_active_contracts(self):
+        """Update progress on active contracts"""
+        current_time = time.time()
+        
+        for contract in self.active_contracts[:]:
+            # Check for time limit expiration
+            if current_time - contract.start_time > contract.time_limit:
+                self.fail_contract(contract, "Time limit exceeded")
+                continue
+                
+            # Check for objective completion (simplified)
+            if contract.mission_type == MissionType.EXPLORATION:
+                self.check_exploration_progress(contract)
+            elif contract.mission_type == MissionType.BLOCKADE_RUNNING:
+                self.check_blockade_running_progress(contract)
+                
+    def check_exploration_progress(self, contract):
+        """Check if player has reached exploration target"""
+        # Extract target coordinates from objectives
+        if scene_manager.current_state != GameState.SPACE:
+            return
+            
+        # This is simplified - in a real implementation, you'd parse the coordinates
+        # and check if player is within range for the required time
+        pass
+        
+    def check_blockade_running_progress(self, contract):
+        """Check progress on blockade running mission"""
+        # Check if player has successfully delivered to blockaded planet
+        pass
+        
+    def remove_expired_contracts(self):
+        """Remove expired available contracts"""
+        current_time = time.time()
+        self.available_contracts = [
+            contract for contract in self.available_contracts
+            if current_time - contract.start_time < contract.time_limit
+        ]
+        
+    def accept_contract(self, contract_id):
+        """Player accepts a contract"""
+        contract = next((c for c in self.available_contracts if c.contract_id == contract_id), None)
+        if not contract:
+            return False
+            
+        # Check requirements
+        if not self.check_requirements(contract):
+            print(f"❌ Requirements not met for {contract.title}")
+            return False
+            
+        # Move to active contracts
+        self.available_contracts.remove(contract)
+        contract.status = ContractStatus.ACCEPTED
+        self.active_contracts.append(contract)
+        
+        print(f"✅ Accepted contract: {contract.title}")
+        return True
+        
+    def check_requirements(self, contract):
+        """Check if player meets contract requirements"""
+        # Check reputation requirements
+        if 'min_reputation' in contract.requirements:
+            for faction_id, min_rep in contract.requirements['min_reputation'].items():
+                player_rep = faction_system.player_reputation.get(faction_id, 0)
+                if player_rep < min_rep:
+                    return False
+                    
+        # Check ship component requirements
+        if 'ship_components' in contract.requirements:
+            for component_name in contract.requirements['ship_components']:
+                component_type = getattr(ComponentType, component_name, None)
+                if component_type and component_type in ship_systems.components:
+                    component = ship_systems.components[component_type]
+                    if component.condition == ComponentCondition.DESTROYED:
+                        return False
+                        
+        # Check cargo capacity
+        if 'cargo_capacity' in contract.requirements:
+            if player_cargo.get_free_capacity() < contract.requirements['cargo_capacity']:
+                return False
+                
+        # Check crew skills
+        if 'crew_skills' in contract.requirements:
+            for skill, min_level in contract.requirements['crew_skills'].items():
+                crew_skill = ship_systems.get_crew_effectiveness(skill)
+                if crew_skill < min_level:
+                    return False
+                    
+        return True
+        
+    def complete_contract(self, contract_id):
+        """Complete a contract and award rewards"""
+        contract = next((c for c in self.active_contracts if c.contract_id == contract_id), None)
+        if not contract:
+            return False
+            
+        # Award rewards
+        if 'credits' in contract.rewards:
+            player_wallet.earn(contract.rewards['credits'])
+            print(f"💰 Earned {contract.rewards['credits']} credits")
+            
+        if 'reputation' in contract.rewards:
+            for faction_id, rep_change in contract.rewards['reputation'].items():
+                faction_system.change_reputation(faction_id, rep_change)
+                print(f"🤝 Reputation with {faction_id}: {rep_change:+d}")
+                
+        # Move to completed contracts
+        self.active_contracts.remove(contract)
+        contract.status = ContractStatus.COMPLETED
+        contract.completion_time = time.time()
+        self.completed_contracts.append(contract)
+        
+        print(f"🎉 Contract completed: {contract.title}")
+        return True
+        
+    def fail_contract(self, contract, reason="Unknown"):
+        """Fail a contract and apply penalties"""
+        print(f"❌ Contract failed: {contract.title} ({reason})")
+        
+        # Apply penalties
+        if 'reputation' in contract.penalties:
+            for faction_id, rep_loss in contract.penalties['reputation'].items():
+                faction_system.change_reputation(faction_id, rep_loss)
+                print(f"💔 Reputation with {faction_id}: {rep_loss:+d}")
+                
+        # Move to completed contracts (as failed)
+        if contract in self.active_contracts:
+            self.active_contracts.remove(contract)
+        elif contract in self.available_contracts:
+            self.available_contracts.remove(contract)
+            
+        contract.status = ContractStatus.FAILED
+        self.completed_contracts.append(contract)
+
+# Create global systems
+weather_system = WeatherSystem()
+military_manager = FactionMilitaryManager()
+dynamic_contracts = DynamicContractSystem()
+
 # ===== TRANSPORT SYSTEM ENUMS AND DATA STRUCTURES =====
 
 class MessageType(Enum):
@@ -1169,6 +2081,31 @@ class SpaceController(Entity):
             scale=0.6,
             color=color.green
         )
+        
+        # Weather and conflict status display
+        self.weather_text = Text(
+            parent=camera.ui,
+            text='🌤️ Weather: Clear',
+            position=(-0.45, 0.0),
+            scale=0.6,
+            color=color.white
+        )
+        
+        self.conflict_text = Text(
+            parent=camera.ui,
+            text='⚔️ Conflicts: 0',
+            position=(-0.45, -0.05),
+            scale=0.6,
+            color=color.orange
+        )
+        
+        self.contracts_text = Text(
+            parent=camera.ui,
+            text='📋 Contracts: 0 available',
+            position=(-0.45, -0.1),
+            scale=0.6,
+            color=color.cyan
+        )
 
     def update(self):
         if not paused:
@@ -1274,6 +2211,31 @@ class SpaceController(Entity):
             else:
                 self.ship_status_text.text = "🔧 All Systems: GOOD"
                 self.ship_status_text.color = color.green
+                
+            # Update weather status
+            if weather_system.active_weather:
+                nearest_weather = min(weather_system.active_weather, 
+                                    key=lambda w: (self.position - Vec3(*w.position)).length())
+                distance = (self.position - Vec3(*nearest_weather.position)).length()
+                if distance < nearest_weather.radius:
+                    self.weather_text.text = f"🌩️ {nearest_weather.weather_type.value}"
+                    self.weather_text.color = color.red
+                else:
+                    self.weather_text.text = f"🌤️ Weather: Clear"
+                    self.weather_text.color = color.white
+            else:
+                self.weather_text.text = f"🌤️ Weather: Clear"
+                self.weather_text.color = color.white
+                
+            # Update conflict status
+            active_conflicts = len(military_manager.active_conflicts)
+            total_blockades = len(military_manager.blockade_zones)
+            self.conflict_text.text = f"⚔️ Conflicts: {active_conflicts} | 🚫 Blockades: {total_blockades}"
+            
+            # Update contracts status
+            available_contracts = len(dynamic_contracts.available_contracts)
+            active_contracts = len(dynamic_contracts.active_contracts)
+            self.contracts_text.text = f"📋 Contracts: {available_contracts} available | {active_contracts} active"
 
 # Player setup with proper 3D movement
 player = SpaceController()
@@ -4042,11 +5004,36 @@ def update():
     for planet in planets:
         if hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
             planet.enhanced_economy.update()
+            
+    # Update new persistent systems
+    weather_system.update()
+    military_manager.update()
+    dynamic_contracts.update()
 
 # Function to handle landing
 def land_on_planet():
     global nearby_planet
     if nearby_planet:
+        # Check if planet is blockaded
+        if military_manager.is_planet_blockaded(nearby_planet.name):
+            if not military_manager.can_player_access_planet(nearby_planet.name):
+                # Find blockading faction
+                blockade_ships = military_manager.blockade_zones[nearby_planet.name]
+                if blockade_ships:
+                    blockading_faction = blockade_ships[0].faction_id
+                    print(f"🚫 Access to {nearby_planet.name} blocked by {blockading_faction} forces!")
+                    print(f"💡 Improve reputation with {blockading_faction} or break the blockade to land.")
+                    
+                    # Hide landing prompt but don't land
+                    landing_prompt.enabled = False
+                    nearby_planet = None
+                    
+                    # Unfreeze player and capture mouse
+                    player.enabled = True
+                    mouse.locked = True
+                    mouse.visible = False
+                    return
+        
         # Set current planet in scene manager
         scene_manager.current_planet = nearby_planet
         # Switch to town mode
@@ -4077,6 +5064,9 @@ AmbientLight(color=Vec4(0.1, 0.1, 0.1, 1))  # Darker ambient light
 
 # Initialize scene manager after all entities are created
 scene_manager.initialize_space()
+
+# Initialize military and contract systems
+military_manager.initialize_military_presence()
 
 # Game state
 paused = False
@@ -4217,6 +5207,35 @@ def input(key):
                 mission_ui.show()
             else:
                 print("You need to be closer to the mission board!")
+                
+    if key == 'k' and not paused:
+        # Show available contracts (can be accessed anywhere)
+        print("\n📋 AVAILABLE CONTRACTS:")
+        for i, contract in enumerate(dynamic_contracts.available_contracts[:5]):
+            print(f"{i+1}. {contract.title}")
+            print(f"   Client: {contract.client_faction}")
+            print(f"   Reward: {contract.rewards.get('credits', 0)} credits")
+            print(f"   Difficulty: {'⭐' * contract.difficulty}")
+            print(f"   Time limit: {contract.time_limit/60:.0f} minutes")
+            print()
+        if not dynamic_contracts.available_contracts:
+            print("No contracts available.")
+            
+    if key == 'j' and not paused:
+        # Show active contracts
+        print("\n📋 ACTIVE CONTRACTS:")
+        for i, contract in enumerate(dynamic_contracts.active_contracts):
+            elapsed_time = time.time() - contract.start_time
+            remaining_time = contract.time_limit - elapsed_time
+            print(f"{i+1}. {contract.title}")
+            print(f"   Status: {contract.status.value}")
+            print(f"   Time remaining: {remaining_time/60:.1f} minutes")
+            print(f"   Objectives:")
+            for obj in contract.objectives:
+                print(f"     • {obj}")
+            print()
+        if not dynamic_contracts.active_contracts:
+            print("No active contracts.")
     
     # TESTING COMMANDS for the persistent economy
     if key == 'b' and scene_manager.current_state == GameState.TOWN and not paused:
