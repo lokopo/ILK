@@ -507,9 +507,83 @@ class PlanetEconomy:
                     'urgency': urgency,
                     'max_price_willing': self.get_buy_price(commodity) * (3 if urgency == "CRITICAL" else 2)
                 })
+        
+        # 5. LOGICAL SECURITY RESPONSE - Wealthy planets invest in defense
+        self.assess_security_needs()
             
-        # 5. RESET DAILY TRADE TRACKING
+        # 6. RESET DAILY TRADE TRACKING
         self.trade_volume_today = {}
+        
+    def assess_security_needs(self):
+        """LOGICAL: Wealthy planets should invest more in security"""
+        # Calculate planetary wealth
+        total_stockpile_value = 0
+        for commodity, quantity in self.stockpiles.items():
+            if quantity > 0:
+                base_prices = {"food": 10, "technology": 50, "minerals": 25, "luxury_goods": 75, 
+                              "medicine": 40, "weapons": 60, "fuel": 15, "spices": 35}
+                base_price = base_prices.get(commodity, 20)
+                total_stockpile_value += quantity * base_price
+        
+        # Calculate trade volume (wealth generation)
+        daily_trade_value = sum(self.trade_volume_today.values()) * 50  # Estimate value
+        
+        # Total wealth assessment
+        wealth_level = total_stockpile_value + (daily_trade_value * 30)  # 30 days of trade
+        
+        # LOGICAL RESPONSE: Rich planets hire protection
+        if wealth_level > 500000:  # Very wealthy
+            if random.random() < 0.4:  # 40% chance daily
+                self.hire_security("HIGH", wealth_level)
+        elif wealth_level > 200000:  # Moderately wealthy  
+            if random.random() < 0.2:  # 20% chance daily
+                self.hire_security("MEDIUM", wealth_level)
+        elif wealth_level > 50000:   # Some wealth
+            if random.random() < 0.1:  # 10% chance daily
+                self.hire_security("LOW", wealth_level)
+                
+        # ALSO: Respond to recent pirate activity
+        if hasattr(self, 'recent_attacks') and self.recent_attacks > 0:
+            if random.random() < 0.6:  # 60% chance after attack
+                self.hire_security("EMERGENCY", wealth_level)
+                self.recent_attacks = max(0, self.recent_attacks - 1)  # Decay over time
+                
+    def hire_security(self, security_level, wealth):
+        """Hire security forces based on wealth"""
+        security_costs = {
+            "LOW": wealth * 0.02,      # 2% of wealth
+            "MEDIUM": wealth * 0.05,   # 5% of wealth  
+            "HIGH": wealth * 0.08,     # 8% of wealth
+            "EMERGENCY": wealth * 0.12  # 12% of wealth
+        }
+        
+        cost = int(security_costs[security_level])
+        
+        # Wealthy planets can afford security
+        if wealth > cost * 10:  # Only if cost is <10% of wealth
+            # Reduce stockpiles to pay for security (convert wealth to protection)
+            # This is a logical trade-off
+            security_commodities = ["weapons", "technology", "fuel"]
+            for commodity in security_commodities:
+                if commodity in self.stockpiles and self.stockpiles[commodity] > 10:
+                    reduction = min(cost // 100, self.stockpiles[commodity] // 2)
+                    self.stockpiles[commodity] -= reduction
+                    cost -= reduction * 50  # Rough value conversion
+                    if cost <= 0:
+                        break
+            
+            if not hasattr(self, 'security_level'):
+                self.security_level = 0
+            self.security_level = min(100, self.security_level + (20 if security_level == "HIGH" else 10))
+            
+            print(f"🛡️ {self.planet_name} hired {security_level} security (Level: {self.security_level})")
+            
+    def record_pirate_attack(self):
+        """Record when planet is attacked by pirates"""
+        if not hasattr(self, 'recent_attacks'):
+            self.recent_attacks = 0
+        self.recent_attacks += 1
+        print(f"⚠️ {self.planet_name} records pirate attack! (Recent attacks: {self.recent_attacks})")
         
     def get_available_supply(self, commodity):
         """How much of this commodity can be purchased"""
@@ -3458,6 +3532,13 @@ class PirateRaider(TransportShip):
             print(f"💀 Pirate raid successful! Stolen: {cargo_ship.get_cargo_description()}")
             print(f"   Value: {stolen_value} credits")
             
+            # LOGICAL CORRECTION: Notify destination planet of attack
+            if hasattr(cargo_ship, 'destination') and hasattr(cargo_ship.destination, 'enhanced_economy'):
+                cargo_ship.destination.enhanced_economy.record_pirate_attack()
+                
+            # LOGICAL CORRECTION: Increase regional pirate threat
+            self.increase_regional_threat(cargo_ship)
+            
             # Remove the cargo ship
             if 'unified_transport_system' in globals() and cargo_ship in unified_transport_system.cargo_ships:
                 unified_transport_system.cargo_ships.remove(cargo_ship)
@@ -3471,7 +3552,24 @@ class PirateRaider(TransportShip):
             
         else:
             print(f"⚔️ Cargo ship fought off pirate attack!")
+            # Even failed attacks increase threat
+            if hasattr(cargo_ship, 'destination') and hasattr(cargo_ship.destination, 'enhanced_economy'):
+                if random.random() < 0.3:  # 30% chance failed attack is reported
+                    cargo_ship.destination.enhanced_economy.record_pirate_attack()
             self.hunting_mode = False
+            
+    def increase_regional_threat(self, cargo_ship):
+        """LOGICAL: Successful pirate attacks increase regional threat"""
+        # Find nearby planets and warn them
+        if hasattr(cargo_ship, 'position'):
+            for planet in planets:
+                if hasattr(planet, 'enhanced_economy') and planet.enhanced_economy:
+                    distance = (planet.position - cargo_ship.position).length() if hasattr(planet, 'position') else 1000
+                    if distance < 300:  # Within threat radius
+                        # Nearby planets hear about the attack
+                        if random.random() < 0.6:  # 60% chance
+                            planet.enhanced_economy.record_pirate_attack()
+                            print(f"📡 {planet.name} receives pirate threat warning")
             
     def patrol_movement(self):
         """Random patrol movement when no targets found"""
@@ -4118,7 +4216,7 @@ class EnhancedPlanetEconomy:
         self.auto_start_manufacturing()
             
     def assess_and_send_requests(self):
-        """Assess needs and send procurement messages"""
+        """Assess needs and send procurement messages + LOGICAL ECONOMIC CORRECTIONS"""
         needs = self.calculate_needs()
         
         for commodity, request in needs.items():
@@ -4126,6 +4224,51 @@ class EnhancedPlanetEconomy:
             if commodity not in self.outgoing_requests or time.time() - self.outgoing_requests[commodity] > 120:
                 self.send_procurement_message(request)
                 self.outgoing_requests[commodity] = time.time()
+                
+                # LOGICAL CORRECTION: High prices attract more traders
+                if request.max_price > 100:  # High-value commodity
+                    self.spawn_additional_traders(request)
+                    
+    def spawn_additional_traders(self, high_value_request):
+        """LOGICAL: High prices attract additional independent traders"""
+        # Calculate profit potential
+        base_prices = {"food": 10, "technology": 50, "minerals": 25, "luxury_goods": 75, 
+                      "medicine": 40, "weapons": 60, "fuel": 15, "spices": 35}
+        base_price = base_prices.get(high_value_request.commodity, 20)
+        
+        profit_margin = (high_value_request.max_price - base_price) / base_price if base_price > 0 else 0
+        
+        # More traders attracted by higher profit margins
+        if profit_margin > 2.0:  # 200%+ profit
+            trader_spawn_chance = 0.8
+        elif profit_margin > 1.0:  # 100%+ profit
+            trader_spawn_chance = 0.5
+        elif profit_margin > 0.5:  # 50%+ profit
+            trader_spawn_chance = 0.3
+        else:
+            trader_spawn_chance = 0.1
+            
+        if random.random() < trader_spawn_chance:
+            # Spawn independent trader
+            suppliers = self.find_suppliers(high_value_request.commodity)
+            if suppliers:
+                origin_planet = random.choice(suppliers)
+                quantity = min(high_value_request.quantity, 10)
+                
+                # Create profitable cargo run
+                cargo_ship = CargoShip(
+                    origin_planet=origin_planet,
+                    destination_planet=self.planet_object,
+                    cargo_manifest={high_value_request.commodity: quantity}
+                )
+                cargo_ship.profit_motivated = True  # Mark as profit-seeking
+                cargo_ship.expected_profit = profit_margin * quantity * base_price
+                
+                if 'unified_transport_system' in globals():
+                    unified_transport_system.cargo_ships.append(cargo_ship)
+                    
+                print(f"💰 High prices attract trader: {quantity} {high_value_request.commodity} -> {self.planet_name}")
+                print(f"   Expected profit: {cargo_ship.expected_profit:.0f} credits ({profit_margin:.1%} margin)")
                 
     def calculate_needs(self):
         """Calculate what goods this planet needs"""
@@ -4342,17 +4485,75 @@ class PirateBaseEconomy(EnhancedPlanetEconomy):
             self.last_raid_launch = current_time
             
     def consider_launching_raiders(self):
-        """Decide whether to launch raiders based on needs and intelligence"""
+        """Decide whether to launch raiders - LOGICAL: target wealthy areas and profitable routes"""
+        # 1. TARGET WEALTHY PLANETS - Pirates follow the money!
+        wealthy_targets = self.find_wealthy_targets()
+        
+        # 2. TARGET HIGH-VALUE CARGO ROUTES
+        profitable_routes = self.find_profitable_routes()
+        
+        # 3. CRITICAL NEEDS (secondary motivation)
         critical_needs = []
         for commodity, consumption in self.daily_consumption.items():
             current_stock = self.stockpiles.get(commodity, 0)
             days_remaining = current_stock / consumption if consumption > 0 else float('inf')
-            
             if days_remaining < 20:
                 critical_needs.append(commodity)
+        
+        # LOGICAL RAID DECISION: Wealth > Profit > Needs
+        raid_motivation = 0.0
+        
+        # Wealthy targets are ALWAYS attractive (main motivation)
+        if wealthy_targets:
+            raid_motivation += 0.7  # 70% base chance to raid wealth
+            
+        # Profitable routes attract raids
+        if profitable_routes:
+            raid_motivation += 0.5  # 50% chance for profitable routes
+            
+        # Desperate needs drive raids (but secondary)
+        if critical_needs:
+            raid_motivation += 0.3  # 30% chance for needs
+            
+        # Success breeds more raids
+        if len(self.intelligence_cache) > 3:  # Lots of intel = successful pirates
+            raid_motivation += 0.4  # 40% bonus for successful pirates
+            
+        # Launch raid if motivated
+        if random.random() < min(0.95, raid_motivation):  # Cap at 95%
+            target_data = wealthy_targets + profitable_routes + critical_needs
+            self.launch_raider(target_data)
+            
+    def find_wealthy_targets(self):
+        """Find wealthy planets/cargo worth raiding"""
+        wealthy_targets = []
+        
+        # Check intelligence for high-value cargo
+        for intel in self.intelligence_cache:
+            if intel.estimated_value > 50000:  # High-value cargo
+                wealthy_targets.append(intel.cargo_manifest)
                 
-        if critical_needs or random.random() < 0.4:  # 40% chance of opportunistic raiding
-            self.launch_raider(critical_needs)
+        # TODO: Add logic to identify wealthy planets by trade volume/stockpiles
+        return wealthy_targets
+        
+    def find_profitable_routes(self):
+        """Identify profitable trade routes to target"""
+        profitable_routes = []
+        
+        # Look for repeated high-value routes in intelligence
+        route_values = {}
+        for intel in self.intelligence_cache:
+            route_key = f"{intel.origin_planet}->{intel.destination_planet}"
+            if route_key not in route_values:
+                route_values[route_key] = []
+            route_values[route_key].append(intel.estimated_value)
+            
+        # Find consistently profitable routes
+        for route, values in route_values.items():
+            if len(values) > 1 and sum(values) / len(values) > 30000:  # Avg > 30k
+                profitable_routes.append(values[-1])  # Use latest value
+                
+        return profitable_routes
             
     def launch_raider(self, target_commodities=None):
         """Launch a pirate raider"""
