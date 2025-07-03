@@ -389,71 +389,516 @@ class PlayerWallet:
         self.credits += amount
 
 # Ship Upgrade System
-class ShipUpgrades:
-    def __init__(self):
-        self.cargo_capacity = 50  # Starting cargo capacity
-        self.engine_level = 1     # Engine upgrade level (affects speed)
-        self.fuel_efficiency = 1  # Fuel efficiency level
+# ===== REALISTIC SHIP SYSTEMS =====
+
+class ComponentType(Enum):
+    ENGINE = "ENGINE"
+    FUEL_TANK = "FUEL_TANK"
+    LIFE_SUPPORT = "LIFE_SUPPORT"
+    HULL = "HULL"
+    SHIELDS = "SHIELDS"
+    WEAPONS = "WEAPONS"
+    CARGO_BAY = "CARGO_BAY"
+    SENSORS = "SENSORS"
+
+class ComponentCondition(Enum):
+    PERFECT = "PERFECT"
+    GOOD = "GOOD"
+    DAMAGED = "DAMAGED"
+    CRITICAL = "CRITICAL"
+    DESTROYED = "DESTROYED"
+
+@dataclass
+class ShipComponent:
+    component_type: ComponentType
+    level: int
+    condition: ComponentCondition
+    max_integrity: int
+    current_integrity: int
+    efficiency: float  # 0.0 to 1.0
+    
+    def get_performance_modifier(self):
+        """Get performance modifier based on condition"""
+        condition_modifiers = {
+            ComponentCondition.PERFECT: 1.0,
+            ComponentCondition.GOOD: 0.85,
+            ComponentCondition.DAMAGED: 0.6,
+            ComponentCondition.CRITICAL: 0.3,
+            ComponentCondition.DESTROYED: 0.0
+        }
+        return condition_modifiers[self.condition] * self.efficiency
+    
+    def take_damage(self, damage):
+        """Apply damage to component"""
+        self.current_integrity = max(0, self.current_integrity - damage)
         
-        # Upgrade costs (exponentially increasing)
-        self.upgrade_costs = {
-            'cargo': 200,    # Cost for next cargo upgrade
-            'engine': 500,   # Cost for next engine upgrade  
-            'fuel': 300      # Cost for next fuel upgrade
+        # Update condition based on integrity
+        integrity_ratio = self.current_integrity / self.max_integrity
+        if integrity_ratio >= 0.9:
+            self.condition = ComponentCondition.PERFECT
+        elif integrity_ratio >= 0.7:
+            self.condition = ComponentCondition.GOOD
+        elif integrity_ratio >= 0.4:
+            self.condition = ComponentCondition.DAMAGED
+        elif integrity_ratio > 0:
+            self.condition = ComponentCondition.CRITICAL
+        else:
+            self.condition = ComponentCondition.DESTROYED
+            
+    def repair(self, repair_amount):
+        """Repair component"""
+        self.current_integrity = min(self.max_integrity, self.current_integrity + repair_amount)
+        
+        # Update condition
+        integrity_ratio = self.current_integrity / self.max_integrity
+        if integrity_ratio >= 0.9:
+            self.condition = ComponentCondition.PERFECT
+        elif integrity_ratio >= 0.7:
+            self.condition = ComponentCondition.GOOD
+        elif integrity_ratio >= 0.4:
+            self.condition = ComponentCondition.DAMAGED
+        elif integrity_ratio > 0:
+            self.condition = ComponentCondition.CRITICAL
+
+class FuelSystem:
+    def __init__(self):
+        self.max_fuel = 100.0
+        self.current_fuel = 100.0
+        self.fuel_efficiency = 1.0  # Base efficiency
+        self.fuel_consumption_rate = 1.0  # Base consumption per unit distance
+        
+    def consume_fuel(self, distance, ship_mass=1.0, engine_efficiency=1.0):
+        """Consume fuel based on distance, mass, and engine efficiency"""
+        base_consumption = distance * self.fuel_consumption_rate * ship_mass
+        actual_consumption = base_consumption / (self.fuel_efficiency * engine_efficiency)
+        
+        self.current_fuel = max(0, self.current_fuel - actual_consumption)
+        return actual_consumption
+        
+    def refuel(self, amount):
+        """Add fuel to tank"""
+        self.current_fuel = min(self.max_fuel, self.current_fuel + amount)
+        
+    def get_fuel_percentage(self):
+        """Get fuel level as percentage"""
+        return (self.current_fuel / self.max_fuel) * 100
+        
+    def can_travel_distance(self, distance, ship_mass=1.0, engine_efficiency=1.0):
+        """Check if ship has enough fuel for distance"""
+        required_fuel = distance * self.fuel_consumption_rate * ship_mass / (self.fuel_efficiency * engine_efficiency)
+        return self.current_fuel >= required_fuel
+
+class EnhancedCrewMember:
+    def __init__(self, name=None, specialization="general"):
+        self.name = name or f"{random.choice(['Alex', 'Sam', 'Chris', 'Jordan', 'Taylor', 'Casey', 'Riley', 'Avery', 'Quinn', 'Morgan'])}-{random.randint(100, 999)}"
+        self.specialization = specialization
+        
+        # Multiple skills per crew member
+        self.skills = {
+            "engineering": random.randint(1, 10),
+            "piloting": random.randint(1, 10),
+            "combat": random.randint(1, 10),
+            "medical": random.randint(1, 10),
+            "science": random.randint(1, 10),
+            "leadership": random.randint(1, 10)
         }
         
-    def can_afford_upgrade(self, upgrade_type):
-        cost = self.upgrade_costs.get(upgrade_type, 0)
-        return player_wallet.can_afford(cost)
+        # Boost primary specialization
+        if specialization in self.skills:
+            self.skills[specialization] += random.randint(3, 7)
+            self.skills[specialization] = min(20, self.skills[specialization])
         
-    def upgrade_cargo(self):
-        if self.can_afford_upgrade('cargo'):
-            cost = self.upgrade_costs['cargo']
+        self.experience = 0
+        self.loyalty = random.randint(50, 80)
+        self.fatigue = 0  # 0-100
+        self.health = 100
+        self.wage = self.calculate_wage()
+        
+    def calculate_wage(self):
+        """Calculate wage based on skills"""
+        avg_skill = sum(self.skills.values()) / len(self.skills)
+        return int(avg_skill * 3) + random.randint(5, 15)
+        
+    def get_effective_skill(self, skill_type):
+        """Get effective skill considering fatigue and health"""
+        base_skill = self.skills.get(skill_type, 0)
+        fatigue_penalty = (self.fatigue / 100) * 0.3
+        health_penalty = (100 - self.health) / 100 * 0.2
+        
+        return max(0, base_skill * (1 - fatigue_penalty - health_penalty))
+        
+    def gain_experience(self, skill_type, amount):
+        """Gain experience in a skill"""
+        self.experience += amount
+        if skill_type in self.skills:
+            # Chance to improve skill
+            if random.random() < 0.1:  # 10% chance
+                self.skills[skill_type] = min(20, self.skills[skill_type] + 1)
+                print(f"{self.name} improved their {skill_type} skill!")
+
+class RealisticShipSystems:
+    def __init__(self):
+        # Initialize ship components
+        self.components = {
+            ComponentType.ENGINE: ShipComponent(ComponentType.ENGINE, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.FUEL_TANK: ShipComponent(ComponentType.FUEL_TANK, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.LIFE_SUPPORT: ShipComponent(ComponentType.LIFE_SUPPORT, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.HULL: ShipComponent(ComponentType.HULL, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.SHIELDS: ShipComponent(ComponentType.SHIELDS, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.WEAPONS: ShipComponent(ComponentType.WEAPONS, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.CARGO_BAY: ShipComponent(ComponentType.CARGO_BAY, 1, ComponentCondition.PERFECT, 100, 100, 1.0),
+            ComponentType.SENSORS: ShipComponent(ComponentType.SENSORS, 1, ComponentCondition.PERFECT, 100, 100, 1.0)
+        }
+        
+        # Fuel system
+        self.fuel_system = FuelSystem()
+        
+        # Enhanced crew system
+        self.crew = []
+        self.max_crew = 10
+        
+        # Manufacturing and repair
+        self.spare_parts = {
+            "basic_components": 5,
+            "advanced_components": 2,
+            "rare_components": 0
+        }
+        
+        # Performance tracking
+        self.last_position = None
+        self.distance_traveled = 0
+        
+        # Upgrade costs
+        self.upgrade_costs = {
+            'cargo': 200,
+            'engine': 500,
+            'fuel_tank': 400,
+            'shields': 600,
+            'weapons': 700,
+            'life_support': 300
+        }
+        
+    def update(self, current_position):
+        """Update ship systems each frame"""
+        # Calculate distance traveled
+        if hasattr(self, 'last_position'):
+            distance = (current_position - self.last_position).length()
+            self.distance_traveled += distance
+            
+            # Consume fuel based on movement
+            if distance > 0:
+                engine_efficiency = self.components[ComponentType.ENGINE].get_performance_modifier()
+                fuel_efficiency = self.components[ComponentType.FUEL_TANK].get_performance_modifier()
+                ship_mass = self.calculate_ship_mass()
+                
+                fuel_consumed = self.fuel_system.consume_fuel(distance * 0.1, ship_mass, engine_efficiency * fuel_efficiency)
+                
+                # Gain crew experience for pilots
+                for crew_member in self.crew:
+                    if crew_member.specialization == "piloting":
+                        crew_member.gain_experience("piloting", distance * 0.01)
+        
+        self.last_position = current_position
+        
+        # Component wear and tear
+        self.apply_component_wear()
+        
+        # Update crew fatigue
+        self.update_crew_fatigue()
+        
+    def calculate_ship_mass(self):
+        """Calculate ship mass based on components and cargo"""
+        base_mass = 1.0
+        
+        # Add mass from components
+        for component in self.components.values():
+            base_mass += component.level * 0.1
+            
+        # Add cargo mass
+        cargo_mass = player_cargo.get_used_capacity() * 0.01
+        
+        return base_mass + cargo_mass
+        
+    def apply_component_wear(self):
+        """Apply gradual wear to components"""
+        for component in self.components.values():
+            # Random chance of minor wear
+            if random.random() < 0.0001:  # Very small chance per frame
+                component.take_damage(1)
+                
+    def update_crew_fatigue(self):
+        """Update crew fatigue over time"""
+        for crew_member in self.crew:
+            # Increase fatigue slowly
+            crew_member.fatigue = min(100, crew_member.fatigue + 0.001)
+            
+    def get_engine_performance(self):
+        """Get current engine performance"""
+        engine = self.components[ComponentType.ENGINE]
+        fuel_available = self.fuel_system.current_fuel > 0
+        
+        if not fuel_available:
+            return 0.0
+            
+        return engine.get_performance_modifier()
+        
+    def get_cargo_capacity(self):
+        """Get current cargo capacity"""
+        cargo_bay = self.components[ComponentType.CARGO_BAY]
+        base_capacity = 50 + (cargo_bay.level - 1) * 25
+        
+        return int(base_capacity * cargo_bay.get_performance_modifier())
+        
+    def get_max_speed(self):
+        """Get maximum speed based on engine and mass"""
+        engine_performance = self.get_engine_performance()
+        ship_mass = self.calculate_ship_mass()
+        
+        base_speed = 50 + (self.components[ComponentType.ENGINE].level - 1) * 10
+        
+        return base_speed * engine_performance / ship_mass
+        
+    def repair_component(self, component_type, repair_parts):
+        """Repair a component using spare parts"""
+        if component_type not in self.components:
+            return False
+            
+        component = self.components[component_type]
+        
+        # Check if we have parts
+        parts_needed = "basic_components"
+        if component.level > 3:
+            parts_needed = "advanced_components"
+        if component.level > 6:
+            parts_needed = "rare_components"
+            
+        if self.spare_parts.get(parts_needed, 0) >= repair_parts:
+            self.spare_parts[parts_needed] -= repair_parts
+            component.repair(repair_parts * 20)
+            
+            # Crew gains experience
+            for crew_member in self.crew:
+                if crew_member.specialization == "engineering":
+                    crew_member.gain_experience("engineering", repair_parts)
+                    
+            print(f"Repaired {component_type.value} using {repair_parts} {parts_needed}")
+            return True
+            
+        return False
+        
+    def upgrade_component(self, component_type):
+        """Upgrade a component"""
+        if component_type not in self.upgrade_costs:
+            return False
+            
+        cost = self.upgrade_costs[component_type]
+        
+        if player_wallet.can_afford(cost):
             player_wallet.spend(cost)
             
-            # Increase cargo capacity
-            old_capacity = self.cargo_capacity
-            self.cargo_capacity += 25
-            player_cargo.max_capacity = self.cargo_capacity
+            component = self.components[component_type]
+            component.level += 1
+            component.max_integrity += 20
+            component.current_integrity = component.max_integrity
+            component.condition = ComponentCondition.PERFECT
             
-            # Increase cost for next upgrade
-            self.upgrade_costs['cargo'] = int(cost * 1.5)
+            # Update costs
+            self.upgrade_costs[component_type] = int(cost * 1.5)
             
-            print(f"Cargo upgraded! Capacity: {old_capacity} -> {self.cargo_capacity}")
+            # Update player stats based on component
+            if component_type == ComponentType.ENGINE:
+                player.max_speed = self.get_max_speed()
+            elif component_type == ComponentType.CARGO_BAY:
+                player_cargo.max_capacity = self.get_cargo_capacity()
+                
+            print(f"{component_type.value} upgraded to level {component.level}!")
+            return True
+            
+        return False
+        
+    def hire_crew_member(self, specialization="general"):
+        """Hire a new crew member"""
+        if len(self.crew) >= self.max_crew:
+            return False
+            
+        new_crew = EnhancedCrewMember(specialization=specialization)
+        hiring_cost = new_crew.wage * 10  # 10 days advance payment
+        
+        if player_wallet.can_afford(hiring_cost):
+            player_wallet.spend(hiring_cost)
+            self.crew.append(new_crew)
+            print(f"Hired {new_crew.name} ({specialization}) for {hiring_cost} credits")
+            return True
+            
+        return False
+        
+    def get_crew_effectiveness(self, skill_type):
+        """Get total crew effectiveness for a skill"""
+        total_effectiveness = 0
+        
+        for crew_member in self.crew:
+            effectiveness = crew_member.get_effective_skill(skill_type)
+            total_effectiveness += effectiveness
+            
+        return total_effectiveness
+        
+    def get_system_status(self):
+        """Get comprehensive system status"""
+        status = {
+            'fuel_percentage': self.fuel_system.get_fuel_percentage(),
+            'engine_performance': self.get_engine_performance(),
+            'cargo_capacity': self.get_cargo_capacity(),
+            'max_speed': self.get_max_speed(),
+            'crew_count': len(self.crew),
+            'damaged_components': []
+        }
+        
+        for comp_type, component in self.components.items():
+            if component.condition in [ComponentCondition.DAMAGED, ComponentCondition.CRITICAL, ComponentCondition.DESTROYED]:
+                status['damaged_components'].append({
+                    'type': comp_type.value,
+                    'condition': component.condition.value,
+                    'integrity': component.current_integrity
+                })
+                
+        return status
+
+# ===== ENHANCED MANUFACTURING SYSTEM =====
+
+class ManufacturingProcess:
+    def __init__(self, product, inputs, processing_time, skill_required="engineering"):
+        self.product = product
+        self.inputs = inputs  # Dict of {commodity: quantity}
+        self.processing_time = processing_time  # In seconds
+        self.skill_required = skill_required
+        self.progress = 0
+        self.active = False
+        
+    def can_start(self, available_materials, crew_effectiveness):
+        """Check if manufacturing can start"""
+        for commodity, required in self.inputs.items():
+            if available_materials.get(commodity, 0) < required:
+                return False
+        return crew_effectiveness > 0
+        
+    def start_production(self, available_materials):
+        """Start the manufacturing process"""
+        if self.can_start(available_materials, 1):  # Simplified check
+            for commodity, required in self.inputs.items():
+                available_materials[commodity] -= required
+            self.active = True
+            self.progress = 0
             return True
         return False
         
-    def upgrade_engine(self):
-        if self.can_afford_upgrade('engine'):
-            cost = self.upgrade_costs['engine']
-            player_wallet.spend(cost)
+    def update(self, dt, crew_effectiveness):
+        """Update manufacturing progress"""
+        if self.active:
+            progress_rate = crew_effectiveness / 100.0  # Crew skill affects speed
+            self.progress += dt * progress_rate
             
-            # Increase engine level and player speed
-            self.engine_level += 1
-            player.speed += 2
-            player.max_speed += 10
+            if self.progress >= self.processing_time:
+                self.active = False
+                return True  # Production complete
+        return False
+
+class EnhancedManufacturing:
+    def __init__(self):
+        # Define manufacturing recipes
+        self.recipes = {
+            "advanced_components": ManufacturingProcess(
+                "advanced_components",
+                {"minerals": 10, "technology": 5, "basic_components": 3},
+                60.0,  # 1 minute
+                "engineering"
+            ),
+            "weapons": ManufacturingProcess(
+                "weapons",
+                {"minerals": 15, "advanced_components": 2, "technology": 8},
+                120.0,  # 2 minutes
+                "engineering"
+            ),
+            "medicine": ManufacturingProcess(
+                "medicine",
+                {"spices": 5, "technology": 3, "basic_components": 1},
+                90.0,  # 1.5 minutes
+                "medical"
+            ),
+            "luxury_goods": ManufacturingProcess(
+                "luxury_goods",
+                {"spices": 8, "technology": 2, "minerals": 5},
+                150.0,  # 2.5 minutes
+                "science"
+            ),
+            "basic_components": ManufacturingProcess(
+                "basic_components",
+                {"minerals": 5, "fuel": 2},
+                30.0,  # 30 seconds
+                "engineering"
+            )
+        }
+        
+        self.active_processes = {}  # Planet -> {recipe_name: ManufacturingProcess}
+        
+    def start_manufacturing(self, planet_name, recipe_name, available_materials, crew_effectiveness):
+        """Start manufacturing on a planet"""
+        if recipe_name not in self.recipes:
+            return False
             
-            # Increase cost for next upgrade
-            self.upgrade_costs['engine'] = int(cost * 1.8)
+        if planet_name not in self.active_processes:
+            self.active_processes[planet_name] = {}
             
-            print(f"Engine upgraded! Level: {self.engine_level}, Speed increased!")
+        # Create a copy of the recipe for this planet
+        recipe = ManufacturingProcess(
+            self.recipes[recipe_name].product,
+            self.recipes[recipe_name].inputs.copy(),
+            self.recipes[recipe_name].processing_time,
+            self.recipes[recipe_name].skill_required
+        )
+        
+        if recipe.start_production(available_materials):
+            self.active_processes[planet_name][recipe_name] = recipe
+            print(f"🏭 {planet_name} started manufacturing {recipe_name}")
             return True
+            
         return False
         
-    def upgrade_fuel_efficiency(self):
-        if self.can_afford_upgrade('fuel'):
-            cost = self.upgrade_costs['fuel']
-            player_wallet.spend(cost)
+    def update_manufacturing(self, planet_name, dt, crew_effectiveness, stockpiles):
+        """Update manufacturing processes for a planet"""
+        if planet_name not in self.active_processes:
+            return
             
-            # Increase fuel efficiency level
-            self.fuel_efficiency += 1
+        completed_processes = []
+        
+        for recipe_name, process in self.active_processes[planet_name].items():
+            if process.update(dt, crew_effectiveness):
+                # Production completed
+                stockpiles[process.product] = stockpiles.get(process.product, 0) + 1
+                completed_processes.append(recipe_name)
+                print(f"✅ {planet_name} completed manufacturing {process.product}")
+                
+        # Remove completed processes
+        for recipe_name in completed_processes:
+            del self.active_processes[planet_name][recipe_name]
             
-            # Increase cost for next upgrade
-            self.upgrade_costs['fuel'] = int(cost * 1.4)
+    def get_manufacturing_status(self, planet_name):
+        """Get current manufacturing status for a planet"""
+        if planet_name not in self.active_processes:
+            return {}
             
-            print(f"Fuel efficiency upgraded! Level: {self.fuel_efficiency}")
-            return True
-        return False
+        status = {}
+        for recipe_name, process in self.active_processes[planet_name].items():
+            progress_percentage = (process.progress / process.processing_time) * 100
+            status[recipe_name] = {
+                'progress': progress_percentage,
+                'product': process.product,
+                'time_remaining': process.processing_time - process.progress
+            }
+            
+        return status
+
+# Create global manufacturing system
+enhanced_manufacturing = EnhancedManufacturing()
 
 # ===== TRANSPORT SYSTEM ENUMS AND DATA STRUCTURES =====
 
@@ -497,7 +942,7 @@ class CargoIntelligence:
 market_system = MarketSystem()
 player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
 player_wallet = PlayerWallet(starting_credits=500)
-ship_upgrades = ShipUpgrades()
+ship_systems = RealisticShipSystems()
 
 # Create a rotating skybox instead of stars
 class RotatingSkybox(Entity):
@@ -513,14 +958,18 @@ class RotatingSkybox(Entity):
         self.rotation_speed = 360 / (2 * 60 * 60)  # Approximately 0.05 degrees per second
         
         # Load all six faces of the skybox
-        self.textures = {
-            'right': load_texture('assets/textures/skybox_right.png'),
-            'left': load_texture('assets/textures/skybox_left.png'),
-            'top': load_texture('assets/textures/skybox_top.png'),
-            'bottom': load_texture('assets/textures/skybox_bottom.png'),
-            'front': load_texture('assets/textures/skybox_front.png'),
-            'back': load_texture('assets/textures/skybox_back.png')
-        }
+        try:
+            self.textures = {
+                'right': load_texture('assets/textures/skybox_right.png'),
+                'left': load_texture('assets/textures/skybox_left.png'),
+                'top': load_texture('assets/textures/skybox_top.png'),
+                'bottom': load_texture('assets/textures/skybox_bottom.png'),
+                'front': load_texture('assets/textures/skybox_front.png'),
+                'back': load_texture('assets/textures/skybox_back.png')
+            }
+        except:
+            # Fallback if textures not found
+            self.textures = {'right': 'white_cube'}
         
         # Apply textures to the skybox
         self.texture = self.textures['right']
@@ -703,6 +1152,23 @@ class SpaceController(Entity):
             scale=0.6,
             color=color.cyan
         )
+        
+        # Fuel and ship status display
+        self.fuel_text = Text(
+            parent=camera.ui,
+            text='⛽ Fuel: 100%',
+            position=(-0.45, 0.1),
+            scale=0.6,
+            color=color.orange
+        )
+        
+        self.ship_status_text = Text(
+            parent=camera.ui,
+            text='🔧 All Systems: GOOD',
+            position=(-0.45, 0.05),
+            scale=0.6,
+            color=color.green
+        )
 
     def update(self):
         if not paused:
@@ -771,6 +1237,43 @@ class SpaceController(Entity):
             # Update transport status display
             stats = unified_transport_system.get_statistics()
             self.transport_text.text = f"🚢 Ships: {stats['total_ships']} | 🚛 Cargo: {stats['cargo_ships']} | 🏴‍☠️ Raiders: {stats['raiders']} | ⚠️ Threat: {stats['pirate_threat_level']}"
+            
+            # Update ship systems
+            ship_systems.update(self.position)
+            
+            # Update speed based on ship performance
+            engine_performance = ship_systems.get_engine_performance()
+            if engine_performance <= 0:
+                # No fuel or engine destroyed
+                self.speed = 0
+                self.max_speed = 0
+            else:
+                base_speed = 5
+                self.speed = base_speed * engine_performance
+                self.max_speed = int(ship_systems.get_max_speed())
+                
+            # Update cargo capacity
+            player_cargo.max_capacity = ship_systems.get_cargo_capacity()
+            
+            # Update fuel display
+            fuel_percentage = ship_systems.fuel_system.get_fuel_percentage()
+            self.fuel_text.text = f"⛽ Fuel: {fuel_percentage:.1f}%"
+            if fuel_percentage < 20:
+                self.fuel_text.color = color.red
+            elif fuel_percentage < 50:
+                self.fuel_text.color = color.yellow
+            else:
+                self.fuel_text.color = color.orange
+                
+            # Update ship status display
+            system_status = ship_systems.get_system_status()
+            if system_status['damaged_components']:
+                damaged_count = len(system_status['damaged_components'])
+                self.ship_status_text.text = f"🔧 {damaged_count} Systems Damaged"
+                self.ship_status_text.color = color.red
+            else:
+                self.ship_status_text.text = "🔧 All Systems: GOOD"
+                self.ship_status_text.color = color.green
 
 # Player setup with proper 3D movement
 player = SpaceController()
@@ -1127,6 +1630,8 @@ class SceneManager:
             self.space_controller.crew_text.enabled = False
             self.space_controller.time_text.enabled = False
             self.space_controller.transport_text.enabled = False
+            self.space_controller.fuel_text.enabled = False
+            self.space_controller.ship_status_text.enabled = False
             
             # Hide space entities
             for entity in self.space_entities:
@@ -1168,6 +1673,8 @@ class SceneManager:
             self.space_controller.crew_text.enabled = True
             self.space_controller.time_text.enabled = True
             self.space_controller.transport_text.enabled = True
+            self.space_controller.fuel_text.enabled = True
+            self.space_controller.ship_status_text.enabled = True
             camera.parent = self.space_controller
             camera.rotation = (0, 0, 0)
             camera.position = (0, 0, -15) if self.space_controller.third_person else (0, 0, 0)
@@ -1287,6 +1794,10 @@ class Planet(Entity):
         
         # Initialize enhanced economy
         self.enhanced_economy = None  # Will be initialized later
+        
+        # Fuel station availability (some planets have fuel)
+        self.has_fuel_station = random.random() < 0.7  # 70% of planets have fuel
+        self.fuel_price = random.randint(5, 15)  # Credits per fuel unit
         
         # Generate market for this planet (keep for compatibility)
         market_system.generate_market_for_planet(self.name, self.planet_type)
@@ -2280,6 +2791,13 @@ class EnhancedPlanetEconomy:
             self.assess_and_send_requests()
             self.last_procurement_check = current_time
             
+        # Update manufacturing processes
+        crew_effectiveness = 50  # Default effectiveness if no crew system
+        enhanced_manufacturing.update_manufacturing(self.planet_name, time.dt, crew_effectiveness, self.stockpiles)
+        
+        # Auto-start manufacturing based on available materials
+        self.auto_start_manufacturing()
+            
     def assess_and_send_requests(self):
         """Assess needs and send procurement messages"""
         needs = self.calculate_needs()
@@ -2421,6 +2939,42 @@ class EnhancedPlanetEconomy:
                 requesting_planet.enhanced_economy.expected_deliveries[commodity] = current_expected + can_supply
                 
                 print(f"📦 {self.planet_name} shipping {can_supply} {commodity} to {request.requesting_planet}")
+                
+    def auto_start_manufacturing(self):
+        """Automatically start manufacturing based on available materials and planet type"""
+        if self.planet_type == "industrial":
+            # Industrial planets prioritize advanced manufacturing
+            recipes_to_try = ["advanced_components", "weapons", "basic_components"]
+        elif self.planet_type == "tech":
+            # Tech planets focus on high-tech goods
+            recipes_to_try = ["medicine", "advanced_components", "technology"]
+        elif self.planet_type == "luxury":
+            # Luxury planets make luxury goods
+            recipes_to_try = ["luxury_goods", "medicine"]
+        else:
+            # Other planets focus on basic manufacturing
+            recipes_to_try = ["basic_components"]
+            
+        for recipe_name in recipes_to_try:
+            if recipe_name in enhanced_manufacturing.recipes:
+                recipe = enhanced_manufacturing.recipes[recipe_name]
+                
+                # Check if we have materials and aren't already manufacturing this
+                current_processes = enhanced_manufacturing.get_manufacturing_status(self.planet_name)
+                if recipe_name not in current_processes:
+                    # Check if we have enough materials
+                    can_manufacture = True
+                    for commodity, required in recipe.inputs.items():
+                        if self.stockpiles.get(commodity, 0) < required * 2:  # Keep some buffer
+                            can_manufacture = False
+                            break
+                            
+                    if can_manufacture:
+                        crew_effectiveness = 50  # Default
+                        enhanced_manufacturing.start_manufacturing(
+                            self.planet_name, recipe_name, self.stockpiles, crew_effectiveness
+                        )
+                        break  # Only start one process at a time
 
 class PirateBaseEconomy(EnhancedPlanetEconomy):
     """Economy for pirate bases with contraband and raiding needs"""
@@ -2915,23 +3469,24 @@ class UpgradeUI:
         # Update upgrade options
         upgrade_text = "AVAILABLE UPGRADES:\n\n"
         
-        # Cargo upgrade
-        cargo_cost = ship_upgrades.upgrade_costs['cargo']
-        cargo_affordable = "✓" if ship_upgrades.can_afford_upgrade('cargo') else "✗"
-        upgrade_text += f"1. Cargo Hold Upgrade - {cargo_cost} credits {cargo_affordable}\n"
-        upgrade_text += f"   Current: {ship_upgrades.cargo_capacity} -> {ship_upgrades.cargo_capacity + 25}\n\n"
+        # Ship component upgrades
+        components = [
+            ("cargo", "Cargo Bay", ComponentType.CARGO_BAY),
+            ("engine", "Engine", ComponentType.ENGINE),
+            ("fuel_tank", "Fuel Tank", ComponentType.FUEL_TANK),
+            ("shields", "Shields", ComponentType.SHIELDS),
+            ("weapons", "Weapons", ComponentType.WEAPONS),
+            ("life_support", "Life Support", ComponentType.LIFE_SUPPORT)
+        ]
         
-        # Engine upgrade
-        engine_cost = ship_upgrades.upgrade_costs['engine']
-        engine_affordable = "✓" if ship_upgrades.can_afford_upgrade('engine') else "✗"
-        upgrade_text += f"2. Engine Upgrade - {engine_cost} credits {engine_affordable}\n"
-        upgrade_text += f"   Current Level: {ship_upgrades.engine_level} -> {ship_upgrades.engine_level + 1}\n\n"
-        
-        # Fuel efficiency upgrade
-        fuel_cost = ship_upgrades.upgrade_costs['fuel']
-        fuel_affordable = "✓" if ship_upgrades.can_afford_upgrade('fuel') else "✗"
-        upgrade_text += f"3. Fuel Efficiency - {fuel_cost} credits {fuel_affordable}\n"
-        upgrade_text += f"   Current Level: {ship_upgrades.fuel_efficiency} -> {ship_upgrades.fuel_efficiency + 1}\n\n"
+        for i, (upgrade_key, display_name, component_type) in enumerate(components[:6]):
+            cost = ship_systems.upgrade_costs.get(upgrade_key, 999999)
+            affordable = "✓" if player_wallet.can_afford(cost) else "✗"
+            current_level = ship_systems.components[component_type].level
+            condition = ship_systems.components[component_type].condition.value
+            
+            upgrade_text += f"{i+1}. {display_name} Upgrade - {cost} credits {affordable}\n"
+            upgrade_text += f"   Level {current_level} ({condition}) -> Level {current_level + 1}\n\n"
         
         # Weapons upgrade
         weapon_cost = combat_system.weapon_level * 300
@@ -2951,24 +3506,25 @@ class UpgradeUI:
         if not self.active:
             return False
             
-        if key == '1':
-            if ship_upgrades.upgrade_cargo():
-                self.update_display()
-            else:
-                print("Cannot afford cargo upgrade!")
-            return True
-        elif key == '2':
-            if ship_upgrades.upgrade_engine():
-                self.update_display()
-            else:
-                print("Cannot afford engine upgrade!")
-            return True
-        elif key == '3':
-            if ship_upgrades.upgrade_fuel_efficiency():
-                self.update_display()
-            else:
-                print("Cannot afford fuel efficiency upgrade!")
-            return True
+        # Handle component upgrades
+        components = [
+            ("cargo", ComponentType.CARGO_BAY),
+            ("engine", ComponentType.ENGINE),
+            ("fuel_tank", ComponentType.FUEL_TANK),
+            ("shields", ComponentType.SHIELDS),
+            ("weapons", ComponentType.WEAPONS),
+            ("life_support", ComponentType.LIFE_SUPPORT)
+        ]
+        
+        if key in '123456':
+            index = int(key) - 1
+            if index < len(components):
+                upgrade_key, component_type = components[index]
+                if ship_systems.upgrade_component(component_type):
+                    self.update_display()
+                else:
+                    print(f"Cannot afford {component_type.value.lower()} upgrade!")
+                return True
         elif key == '4':
             if combat_system.upgrade_weapons():
                 self.update_display()
@@ -3680,6 +4236,39 @@ def input(key):
         # Advance time quickly (for testing)
         print("⏰ Fast-forwarding time...")
         time_system.advance_day()
+        
+    if key == 'f' and scene_manager.current_state == GameState.SPACE and not paused:
+        # Refuel if near a planet with fuel station
+        if nearby_planet and nearby_planet.has_fuel_station:
+            fuel_needed = ship_systems.fuel_system.max_fuel - ship_systems.fuel_system.current_fuel
+            if fuel_needed > 0:
+                total_cost = int(fuel_needed * nearby_planet.fuel_price)
+                if player_wallet.can_afford(total_cost):
+                    player_wallet.spend(total_cost)
+                    ship_systems.fuel_system.refuel(fuel_needed)
+                    print(f"⛽ Refueled at {nearby_planet.name} for {total_cost} credits")
+                else:
+                    print(f"💰 Not enough credits! Refueling costs {total_cost} credits")
+            else:
+                print("⛽ Fuel tank already full!")
+        else:
+            if nearby_planet:
+                print(f"❌ {nearby_planet.name} has no fuel station")
+            else:
+                print("❌ No planet nearby for refueling")
+                
+    if key == 'g' and not paused:
+        # Emergency repair using spare parts
+        damaged_components = ship_systems.get_system_status()['damaged_components']
+        if damaged_components:
+            component_name = damaged_components[0]['type']
+            component_type = ComponentType(component_name)
+            if ship_systems.repair_component(component_type, 1):
+                print(f"🔧 Emergency repair completed on {component_name}")
+            else:
+                print("🔧 No spare parts available for repairs")
+        else:
+            print("🔧 All systems operating normally")
         
 def show_economic_info(planet_name):
     """Display detailed economic information about a planet"""
