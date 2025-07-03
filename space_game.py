@@ -171,8 +171,11 @@ class PlanetEconomy:
             
             # Track shortages for realistic pricing
             if actual_consumption < consumption:
-                shortage_ratio = actual_consumption / consumption
-                print(f"{self.planet_name} experiencing {commodity} shortage! ({shortage_ratio:.1%} of needs met)")
+                if consumption > 0:  # Prevent division by zero
+                    shortage_ratio = actual_consumption / consumption
+                    print(f"{self.planet_name} experiencing {commodity} shortage! ({shortage_ratio:.1%} of needs met)")
+                else:
+                    print(f"{self.planet_name} experiencing {commodity} shortage! (No consumption data)")
                 
         # 3. BLOCKADE EFFECTS
         if self.blockaded:
@@ -212,9 +215,15 @@ class PlanetEconomy:
         if available <= 0:
             supply_factor = 5.0  # Extreme scarcity
         elif available < consumption * 5:  # Less than 5 days supply
-            supply_factor = 2.0 + (5 - available/consumption) * 0.5
+            if consumption > 0:  # Prevent division by zero
+                supply_factor = 2.0 + (5 - available/consumption) * 0.5
+            else:
+                supply_factor = 5.0  # Treat as extreme scarcity
         elif available < consumption * 15:  # Less than 15 days supply
-            supply_factor = 1.0 + (15 - available/consumption) * 0.1
+            if consumption > 0:  # Prevent division by zero
+                supply_factor = 1.0 + (15 - available/consumption) * 0.1
+            else:
+                supply_factor = 1.0  # Default supply factor
         else:
             supply_factor = 0.8  # Abundant supply
             
@@ -686,7 +695,10 @@ class SpaceController(Entity):
             self.position += self.velocity * time.dt
             
             # Update status text with speed info
-            speed_percentage = int((self.velocity.length() / self.max_speed) * 100)
+            if self.max_speed > 0:  # Prevent division by zero
+                speed_percentage = int((self.velocity.length() / self.max_speed) * 100)
+            else:
+                speed_percentage = 0
             self.status_text.text = f'Speed: {speed_percentage}%'
             
             # Update credits and cargo display
@@ -2736,7 +2748,7 @@ def input(key):
                 else:
                     # Fallback for testing
                     planet_name = "Local Trading Post"
-                    if planet_name not in market_system.planet_markets:
+                    if planet_name not in market_system.planet_economies:
                         market_system.generate_market_for_planet(planet_name, "generic")
                     trading_ui.show(planet_name)
             else:
