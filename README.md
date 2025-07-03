@@ -75,6 +75,11 @@ This game is in very early development. Many features are incomplete or may not 
 - **H**: Hire crew member (crew management)
 - **F**: Fire crew member (crew management)
 
+### Economic Testing Commands
+- **B**: Toggle blockade on current planet (testing)
+- **I**: Show detailed economic information for current planet
+- **N**: Fast-forward time by one day (testing)
+
 ## Contributing
 This is an early alpha version. Feel free to submit issues and suggestions, but please be aware that the codebase is still in flux.
 

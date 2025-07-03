@@ -70,6 +70,212 @@ class CargoSystem:
     def get_cargo_list(self):
         return [(name, qty) for name, qty in self.cargo.items()]
 
+class PlanetEconomy:
+    def __init__(self, planet_name, planet_type):
+        self.planet_name = planet_name
+        self.planet_type = planet_type
+        self.population = random.randint(100000, 1000000)
+        
+        # PERSISTENT STOCKPILES - actual commodity amounts on planet
+        self.stockpiles = {}
+        
+        # PRODUCTION/CONSUMPTION per day based on planet type
+        self.daily_production = {}
+        self.daily_consumption = {}
+        
+        # BLOCKADE status - affects supply chain
+        self.blockaded = False
+        self.blockade_days = 0
+        
+        # TRADING HISTORY - track player impact
+        self.trade_volume_today = {}
+        
+        self.initialize_economy()
+        
+    def initialize_economy(self):
+        """Set realistic starting stockpiles and production based on planet type"""
+        
+        # Base consumption for all planets (basic needs)
+        base_consumption = {
+            "food": self.population // 5000,      # 200 food per day for 1M people
+            "medicine": self.population // 50000,  # 20 medicine per day
+            "fuel": self.population // 10000      # 100 fuel per day
+        }
+        
+        # Planet type specializations
+        if self.planet_type == "agricultural":
+            # Produces massive food, consumes tech/luxury
+            self.daily_production = {"food": base_consumption["food"] * 3, "spices": 50}
+            self.daily_consumption = {**base_consumption, "technology": 30, "luxury_goods": 20}
+            self.stockpiles = {"food": 5000, "spices": 500, "technology": 50, "luxury_goods": 100}
+            
+        elif self.planet_type == "industrial":
+            # Produces tech/weapons, consumes food/minerals
+            self.daily_production = {"technology": 40, "weapons": 20, "medicine": 30}
+            self.daily_consumption = {**base_consumption, "minerals": 100, "luxury_goods": 30}
+            self.stockpiles = {"technology": 800, "weapons": 300, "medicine": 400, "food": 200}
+            
+        elif self.planet_type == "mining":
+            # Produces minerals/fuel, consumes food/tech
+            self.daily_production = {"minerals": 150, "fuel": 100}
+            self.daily_consumption = {**base_consumption, "technology": 40, "luxury_goods": 15}
+            self.stockpiles = {"minerals": 3000, "fuel": 2000, "food": 150, "technology": 60}
+            
+        elif self.planet_type == "tech":
+            # Produces advanced tech, consumes minerals/luxury
+            self.daily_production = {"technology": 60, "medicine": 40, "weapons": 30}
+            self.daily_consumption = {**base_consumption, "minerals": 80, "luxury_goods": 50}
+            self.stockpiles = {"technology": 1200, "medicine": 600, "weapons": 400, "luxury_goods": 200}
+            
+        elif self.planet_type == "luxury":
+            # Produces luxury goods, consumes everything else
+            self.daily_production = {"luxury_goods": 80, "spices": 40}
+            self.daily_consumption = {**base_consumption, "technology": 50, "minerals": 60}
+            self.stockpiles = {"luxury_goods": 1500, "spices": 800, "food": 300}
+            
+        else:  # Generic/other planet types
+            # Balanced production/consumption
+            self.daily_production = {"food": base_consumption["food"] // 2, "minerals": 50}
+            self.daily_consumption = base_consumption
+            self.stockpiles = {"food": 1000, "minerals": 800, "technology": 200}
+            
+        # Ensure all commodities exist in stockpiles (even if 0)
+        for commodity in ["food", "minerals", "technology", "luxury_goods", "medicine", "weapons", "fuel", "spices"]:
+            if commodity not in self.stockpiles:
+                self.stockpiles[commodity] = 0
+                
+    def daily_economic_update(self):
+        """Process daily production, consumption, and trade effects"""
+        
+        # 1. PRODUCTION PHASE
+        for commodity, amount in self.daily_production.items():
+            production = amount
+            
+            # Blockades reduce production efficiency
+            if self.blockaded:
+                production = int(production * (0.5 - min(0.4, self.blockade_days * 0.05)))
+                
+            self.stockpiles[commodity] += production
+            
+        # 2. CONSUMPTION PHASE
+        for commodity, amount in self.daily_consumption.items():
+            consumption = amount
+            
+            # Starvation effects - increase consumption of scarce goods
+            if self.stockpiles[commodity] < consumption * 3:  # Less than 3 days supply
+                consumption = int(consumption * 1.2)  # Panic buying
+                
+            # Can't consume more than available
+            actual_consumption = min(consumption, self.stockpiles[commodity])
+            self.stockpiles[commodity] -= actual_consumption
+            
+            # Track shortages for realistic pricing
+            if actual_consumption < consumption:
+                shortage_ratio = actual_consumption / consumption
+                print(f"{self.planet_name} experiencing {commodity} shortage! ({shortage_ratio:.1%} of needs met)")
+                
+        # 3. BLOCKADE EFFECTS
+        if self.blockaded:
+            self.blockade_days += 1
+            # Increased consumption due to hoarding and waste
+            for commodity in self.stockpiles:
+                waste = int(self.stockpiles[commodity] * 0.02)  # 2% daily waste during blockade
+                self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - waste)
+        else:
+            self.blockade_days = 0
+            
+        # 4. RESET DAILY TRADE TRACKING
+        self.trade_volume_today = {}
+        
+    def get_available_supply(self, commodity):
+        """How much of this commodity can be purchased"""
+        stockpile = self.stockpiles.get(commodity, 0)
+        
+        # Don't sell below strategic reserves (10 days consumption)
+        consumption = self.daily_consumption.get(commodity, 0)
+        strategic_reserve = consumption * 10
+        
+        return max(0, stockpile - strategic_reserve)
+        
+    def get_buy_price(self, commodity):
+        """Calculate realistic buy price based on supply/demand"""
+        base_commodity = market_system.commodities.get(commodity)
+        if not base_commodity:
+            return 0
+            
+        base_price = base_commodity.base_price
+        
+        # Supply factor
+        available = self.get_available_supply(commodity)
+        consumption = self.daily_consumption.get(commodity, 1)
+        
+        if available <= 0:
+            supply_factor = 5.0  # Extreme scarcity
+        elif available < consumption * 5:  # Less than 5 days supply
+            supply_factor = 2.0 + (5 - available/consumption) * 0.5
+        elif available < consumption * 15:  # Less than 15 days supply
+            supply_factor = 1.0 + (15 - available/consumption) * 0.1
+        else:
+            supply_factor = 0.8  # Abundant supply
+            
+        # Demand factor (production surplus = lower prices)
+        production = self.daily_production.get(commodity, 0)
+        if production > consumption:
+            demand_factor = 0.7  # Surplus = cheap
+        else:
+            demand_factor = 1.2  # Deficit = expensive
+            
+        # Blockade factor
+        blockade_factor = 1.0 + (self.blockade_days * 0.1) if self.blockaded else 1.0
+        
+        # Planet type modifier
+        planet_modifiers = {
+            "agricultural": {"food": 0.6, "technology": 1.4, "minerals": 1.2, "luxury_goods": 1.3},
+            "industrial": {"minerals": 0.8, "technology": 0.7, "food": 1.5, "weapons": 0.8},
+            "mining": {"minerals": 0.5, "fuel": 0.6, "technology": 1.6, "food": 1.4},
+            "tech": {"technology": 0.6, "medicine": 0.7, "minerals": 1.3, "food": 1.3},
+            "luxury": {"luxury_goods": 0.7, "spices": 0.6, "food": 1.2, "technology": 1.2}
+        }
+        
+        planet_factor = planet_modifiers.get(self.planet_type, {}).get(
+            base_commodity.category, 1.0)
+            
+        final_price = base_price * supply_factor * demand_factor * blockade_factor * planet_factor
+        return max(1, int(final_price))
+        
+    def get_sell_price(self, commodity):
+        """Price planet pays when buying from player"""
+        buy_price = self.get_buy_price(commodity)
+        
+        # Higher demand = better sell prices
+        available = self.get_available_supply(commodity)
+        consumption = self.daily_consumption.get(commodity, 1)
+        
+        if available <= 0:
+            sell_ratio = 0.95  # Desperate for supplies
+        elif available < consumption * 3:
+            sell_ratio = 0.85  # High demand
+        else:
+            sell_ratio = 0.75  # Normal demand
+            
+        return max(1, int(buy_price * sell_ratio))
+        
+    def trade_transaction(self, commodity, quantity, is_player_buying):
+        """Execute a trade and update stockpiles"""
+        if is_player_buying:
+            # Player buying from planet
+            available = self.get_available_supply(commodity)
+            actual_quantity = min(quantity, available)
+            self.stockpiles[commodity] -= actual_quantity
+        else:
+            # Player selling to planet
+            self.stockpiles[commodity] += quantity
+            actual_quantity = quantity
+            
+        # Track trade volume for market effects
+        self.trade_volume_today[commodity] = self.trade_volume_today.get(commodity, 0) + actual_quantity
+        return actual_quantity
+
 class MarketSystem:
     def __init__(self):
         # Define available commodities
@@ -84,42 +290,73 @@ class MarketSystem:
             "spices": Commodity("Spices", 35, "luxury")
         }
         
-        # Planet market data: {planet_name: {commodity: (supply_level, demand_level)}}
-        self.planet_markets = {}
+        # Planet economies - persistent economic simulation
+        self.planet_economies = {}
         
     def generate_market_for_planet(self, planet_name, planet_type="generic"):
-        """Generate a market with random supply/demand for a planet"""
-        market = {}
-        for commodity_name in self.commodities.keys():
-            # Random supply/demand between 0.5 and 2.0
-            supply_demand = random.uniform(0.5, 2.0)
-            market[commodity_name] = supply_demand
-        
-        # Store planet type for price calculations
-        self.planet_markets[planet_name] = {
-            'market': market,
-            'type': planet_type
-        }
+        """Generate a realistic persistent economy for a planet"""
+        if planet_name not in self.planet_economies:
+            self.planet_economies[planet_name] = PlanetEconomy(planet_name, planet_type)
         
     def get_buy_price(self, planet_name, commodity_name):
         """Price player pays to buy from planet"""
-        if planet_name not in self.planet_markets:
+        if planet_name not in self.planet_economies:
             return 0
             
-        commodity = self.commodities.get(commodity_name)
-        if not commodity:
-            return 0
-            
-        planet_data = self.planet_markets[planet_name]
-        supply_demand = planet_data['market'].get(commodity_name, 1.0)
-        planet_type = planet_data['type']
-        
-        return commodity.get_price(planet_type, supply_demand)
+        economy = self.planet_economies[planet_name]
+        return economy.get_buy_price(commodity_name)
         
     def get_sell_price(self, planet_name, commodity_name):
         """Price player gets when selling to planet"""
-        buy_price = self.get_buy_price(planet_name, commodity_name)
-        return max(1, int(buy_price * 0.8))  # 20% margin for the market
+        if planet_name not in self.planet_economies:
+            return 0
+            
+        economy = self.planet_economies[planet_name]
+        return economy.get_sell_price(commodity_name)
+        
+    def get_available_supply(self, planet_name, commodity_name):
+        """How much of this commodity can be purchased from planet"""
+        if planet_name not in self.planet_economies:
+            return 0
+            
+        economy = self.planet_economies[planet_name]
+        return economy.get_available_supply(commodity_name)
+        
+    def execute_trade(self, planet_name, commodity_name, quantity, is_player_buying):
+        """Execute a trade transaction and update planet economy"""
+        if planet_name not in self.planet_economies:
+            return 0
+            
+        economy = self.planet_economies[planet_name]
+        return economy.trade_transaction(commodity_name, quantity, is_player_buying)
+        
+    def daily_economic_update(self):
+        """Update all planet economies daily"""
+        for economy in self.planet_economies.values():
+            economy.daily_economic_update()
+            
+    def set_blockade(self, planet_name, blockaded=True):
+        """Set or remove blockade on a planet"""
+        if planet_name in self.planet_economies:
+            self.planet_economies[planet_name].blockaded = blockaded
+            if blockaded:
+                print(f"🚫 {planet_name} is now under blockade!")
+            else:
+                print(f"✅ Blockade on {planet_name} has been lifted!")
+                
+    def get_planet_info(self, planet_name):
+        """Get detailed economic information about a planet"""
+        if planet_name not in self.planet_economies:
+            return None
+            
+        economy = self.planet_economies[planet_name]
+        return {
+            'population': economy.population,
+            'type': economy.planet_type,
+            'stockpiles': economy.stockpiles.copy(),
+            'blockaded': economy.blockaded,
+            'blockade_days': economy.blockade_days
+        }
 
 class PlayerWallet:
     def __init__(self, starting_credits=1000):
@@ -1429,13 +1666,47 @@ class TimeSystem:
         print(f"Day {self.game_day} - Crew wages: {crew_system.daily_wages} credits")
         
     def update_markets(self):
-        """Update market prices daily"""
-        for planet_name, planet_data in market_system.planet_markets.items():
-            market = planet_data['market']
-            for commodity in market:
-                # Small daily price fluctuations
-                change = random.uniform(-0.1, 0.1)
-                market[commodity] = max(0.3, min(3.0, market[commodity] + change))
+        """Run daily economic simulation for all planets"""
+        print(f"\n🌍 Day {self.game_day} Economic Report:")
+        
+        # Run daily updates for all planet economies  
+        market_system.daily_economic_update()
+        
+        # Random events that can affect supply chains
+        if random.random() < 0.1:  # 10% chance daily
+            self.random_economic_event()
+            
+    def random_economic_event(self):
+        """Generate random economic events"""
+        if not market_system.planet_economies:
+            return
+            
+        event_type = random.choice(['shortage', 'surplus', 'blockade_start', 'blockade_end'])
+        planet_name = random.choice(list(market_system.planet_economies.keys()))
+        
+        if event_type == 'shortage':
+            commodity = random.choice(['food', 'medicine', 'fuel'])
+            economy = market_system.planet_economies[planet_name]
+            # Reduce stockpile by 50%
+            current = economy.stockpiles.get(commodity, 0)
+            economy.stockpiles[commodity] = current // 2
+            print(f"⚠️ {planet_name} reports {commodity} shortage due to supply chain disruption!")
+            
+        elif event_type == 'surplus':
+            commodity = random.choice(['minerals', 'luxury_goods', 'technology'])
+            economy = market_system.planet_economies[planet_name]
+            # Increase stockpile
+            bonus = random.randint(100, 500)
+            economy.stockpiles[commodity] = economy.stockpiles.get(commodity, 0) + bonus
+            print(f"📈 {planet_name} discovers new {commodity} deposits! Market flooded!")
+            
+        elif event_type == 'blockade_start' and random.random() < 0.3:  # 30% chance
+            if not market_system.planet_economies[planet_name].blockaded:
+                market_system.set_blockade(planet_name, True)
+                
+        elif event_type == 'blockade_end':
+            if market_system.planet_economies[planet_name].blockaded:
+                market_system.set_blockade(planet_name, False)
 
 class Mission:
     def __init__(self, mission_type, faction_id, description, reward, reputation_change, requirements=None):
@@ -1594,22 +1865,37 @@ class TradingUI:
         if not self.current_planet:
             return
             
-        # Update planet info
-        planet_type = market_system.planet_markets[self.current_planet]['type']
-        self.planet_info.text = f'Planet: {self.current_planet}\nType: {planet_type.title()}'
+        # Update planet info with realistic economic data
+        planet_info = market_system.get_planet_info(self.current_planet)
+        if planet_info:
+            blockade_status = " [BLOCKADED]" if planet_info['blockaded'] else ""
+            self.planet_info.text = f'Planet: {self.current_planet}{blockade_status}\nType: {planet_info["type"].title()}\nPopulation: {planet_info["population"]:,}'
+        else:
+            self.planet_info.text = f'Planet: {self.current_planet}\nType: Unknown'
         
         # Update player info
         self.player_info.text = f'Credits: {player_wallet.credits}\nCargo: {player_cargo.get_used_capacity()}/{player_cargo.max_capacity}'
         
-        # Update commodity list
+        # Update commodity list with realistic supply data
         commodity_text = "COMMODITIES:\n\n"
         commodities = list(market_system.commodities.keys())
         for i, commodity_name in enumerate(commodities[:8]):  # Show first 8 commodities
             buy_price = market_system.get_buy_price(self.current_planet, commodity_name)
             sell_price = market_system.get_sell_price(self.current_planet, commodity_name)
+            available = market_system.get_available_supply(self.current_planet, commodity_name)
             player_has = player_cargo.cargo.get(commodity_name, 0)
+            
+            # Show supply status
+            if available == 0:
+                supply_status = "OUT OF STOCK"
+            elif available < 10:
+                supply_status = f"LOW ({available})"
+            else:
+                supply_status = f"Available: {available}"
+                
             commodity_text += f"{i+1}. {commodity_name.replace('_', ' ').title()}\n"
-            commodity_text += f"   Buy: {buy_price}  Sell: {sell_price}  Have: {player_has}\n\n"
+            commodity_text += f"   Buy: {buy_price} ({supply_status})\n"
+            commodity_text += f"   Sell: {sell_price}  Have: {player_has}\n\n"
         
         self.commodity_list.text = commodity_text
         
@@ -1639,26 +1925,54 @@ class TradingUI:
         
     def buy_commodity(self, commodity_name):
         buy_price = market_system.get_buy_price(self.current_planet, commodity_name)
+        available = market_system.get_available_supply(self.current_planet, commodity_name)
         
+        if available <= 0:
+            print(f"❌ {self.current_planet} is out of {commodity_name.replace('_', ' ')}!")
+            return
+            
         if player_wallet.can_afford(buy_price) and player_cargo.can_add(commodity_name, 1):
-            player_wallet.spend(buy_price)
-            player_cargo.add_cargo(commodity_name, 1)
-            print(f"Bought 1 {commodity_name.replace('_', ' ')} for {buy_price} credits")
+            # Execute the trade through the persistent economy
+            actual_quantity = market_system.execute_trade(self.current_planet, commodity_name, 1, True)
+            
+            if actual_quantity > 0:
+                player_wallet.spend(buy_price)
+                player_cargo.add_cargo(commodity_name, actual_quantity)
+                print(f"✅ Bought {actual_quantity} {commodity_name.replace('_', ' ')} for {buy_price} credits")
+                
+                # Check if this purchase created shortage
+                remaining = market_system.get_available_supply(self.current_planet, commodity_name)
+                if remaining < 5:
+                    print(f"⚠️ {self.current_planet} is running low on {commodity_name.replace('_', ' ')}!")
+            else:
+                print(f"❌ Failed to purchase {commodity_name.replace('_', ' ')}")
+                
             self.update_display()
         elif not player_wallet.can_afford(buy_price):
-            print("Not enough credits!")
+            print("💰 Not enough credits!")
         else:
-            print("Cargo hold full!")
+            print("📦 Cargo hold full!")
             
     def sell_commodity(self, commodity_name):
         if player_cargo.cargo.get(commodity_name, 0) > 0:
             sell_price = market_system.get_sell_price(self.current_planet, commodity_name)
+            
+            # Execute the trade through the persistent economy
+            market_system.execute_trade(self.current_planet, commodity_name, 1, False)
             player_cargo.remove_cargo(commodity_name, 1)
             player_wallet.earn(sell_price)
-            print(f"Sold 1 {commodity_name.replace('_', ' ')} for {sell_price} credits")
+            print(f"✅ Sold 1 {commodity_name.replace('_', ' ')} for {sell_price} credits")
+            
+            # Check if this sale helped with shortages
+            planet_info = market_system.get_planet_info(self.current_planet)
+            if planet_info:
+                stockpile = planet_info['stockpiles'].get(commodity_name, 0)
+                if stockpile < 50:
+                    print(f"📈 Your sale helps alleviate {self.current_planet}'s {commodity_name.replace('_', ' ')} shortage!")
+            
             self.update_display()
         else:
-            print(f"You don't have any {commodity_name.replace('_', ' ')}!")
+            print(f"❌ You don't have any {commodity_name.replace('_', ' ')}!")
 
 # Create trading UI
 trading_ui = TradingUI()
@@ -2475,6 +2789,69 @@ def input(key):
                 mission_ui.show()
             else:
                 print("You need to be closer to the mission board!")
+    
+    # TESTING COMMANDS for the persistent economy
+    if key == 'b' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Toggle blockade on current planet (for testing)
+        if scene_manager.current_planet:
+            planet_info = market_system.get_planet_info(scene_manager.current_planet.name)
+            if planet_info:
+                current_status = planet_info['blockaded']
+                market_system.set_blockade(scene_manager.current_planet.name, not current_status)
+                
+    if key == 'i' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Show detailed economic info for current planet
+        if scene_manager.current_planet:
+            show_economic_info(scene_manager.current_planet.name)
+            
+    if key == 'n' and not paused:
+        # Advance time quickly (for testing)
+        print("⏰ Fast-forwarding time...")
+        time_system.advance_day()
+        
+def show_economic_info(planet_name):
+    """Display detailed economic information about a planet"""
+    planet_info = market_system.get_planet_info(planet_name)
+    if not planet_info:
+        print(f"❌ No economic data for {planet_name}")
+        return
+        
+    print(f"\n📊 ECONOMIC REPORT: {planet_name}")
+    print(f"Population: {planet_info['population']:,}")
+    print(f"Type: {planet_info['type'].title()}")
+    print(f"Blockaded: {'YES' if planet_info['blockaded'] else 'NO'}")
+    if planet_info['blockaded']:
+        print(f"Blockade Duration: {planet_info['blockade_days']} days")
+        
+    print("\n📦 STOCKPILES:")
+    economy = market_system.planet_economies[planet_name]
+    for commodity, amount in sorted(planet_info['stockpiles'].items()):
+        consumption = economy.daily_consumption.get(commodity, 0)
+        production = economy.daily_production.get(commodity, 0)
+        
+        # Calculate days of supply
+        if consumption > 0:
+            days_supply = amount / consumption
+            supply_status = f"({days_supply:.1f} days)"
+        else:
+            supply_status = "(not consumed)"
+            
+        # Show production/consumption balance
+        if production > consumption:
+            balance = f"+{production - consumption}/day"
+        elif consumption > production:
+            balance = f"-{consumption - production}/day"
+        else:
+            balance = "balanced"
+            
+        print(f"  {commodity}: {amount} {supply_status} {balance}")
+        
+    print(f"\n💰 Current market prices:")
+    for commodity in ['food', 'technology', 'minerals', 'luxury_goods']:
+        buy_price = market_system.get_buy_price(planet_name, commodity)
+        sell_price = market_system.get_sell_price(planet_name, commodity)
+        available = market_system.get_available_supply(planet_name, commodity)
+        print(f"  {commodity}: Buy {buy_price}, Sell {sell_price}, Available: {available}")
     
     if key == 'left mouse down' and not paused:
         if scene_manager.current_state == GameState.SPACE:
