@@ -1,10 +1,62 @@
 #!/usr/bin/env python3
 
-from ursina import *
-from ursina.prefabs.first_person_controller import FirstPersonController
+import os
+import sys
+
+# Add error handling for headless environments
+try:
+    from ursina import *
+    from ursina.prefabs.first_person_controller import FirstPersonController
+    GRAPHICS_AVAILABLE = True
+except Exception as e:
+    print(f"Graphics not available: {e}")
+    print("This appears to be a headless environment.")
+    print("The game requires OpenGL support to run.")
+    GRAPHICS_AVAILABLE = False
+
+if not GRAPHICS_AVAILABLE:
+    print("\n=== ILK SPACE GAME ===")
+    print("This is a 3D space exploration game that requires graphics support.")
+    print("\nTo run this game, you need:")
+    print("1. A system with OpenGL support")
+    print("2. A desktop environment (not headless/remote)")
+    print("3. Python dependencies installed (see requirements.txt)")
+    print("\nHow to start the game on a local system:")
+    print("1. Clone this repository")
+    print("2. Install dependencies: pip install -r requirements.txt")
+    print("3. Run: python3 space_game.py")
+    print("   OR")
+    print("4. Run: ./run_me.py (sets up virtual environment automatically)")
+    print("\n=== GAME FEATURES ===")
+    print("• Space exploration with multiple randomly generated planets")
+    print("• Landing system - get close to planets to land on them")
+    print("• Trading system - buy and sell resources at different planets")
+    print("• Two game modes: Space (6DOF movement) and Surface (FPS-style)")
+    print("• Inventory and resource management")
+    print("• Save/Load game system")
+    print("• Beautiful rotating skybox")
+    print("• Physics-based movement and collision detection")
+    print("\n=== CONTROLS ===")
+    print("Space Mode:")
+    print("  WASD - Move forward/back/left/right")
+    print("  Space/Shift - Move up/down")
+    print("  Q/E - Roll left/right")
+    print("  Mouse - Look around")
+    print("  F7 - Toggle third-person view")
+    print("\nSurface Mode:")
+    print("  WASD - Walk")
+    print("  Space - Jump (double jump available)")
+    print("  Mouse - Look around")
+    print("  T - Open trading menu (when near trading posts)")
+    print("\nUniversal:")
+    print("  ESC - Pause menu (Save/Load/Quit)")
+    print("  I - Open inventory")
+    print("  F6 - Take screenshot")
+    print("  F8 - Switch between Space and Surface modes")
+    sys.exit(1)
+
 import random
 import numpy as np
-import os
 import math
 import json
 import pickle
