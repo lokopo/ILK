@@ -1,10 +1,62 @@
 #!/usr/bin/env python3
 
-from ursina import *
-from ursina.prefabs.first_person_controller import FirstPersonController
+import os
+import sys
+
+# Add error handling for headless environments
+try:
+    from ursina import *
+    from ursina.prefabs.first_person_controller import FirstPersonController
+    GRAPHICS_AVAILABLE = True
+except Exception as e:
+    print(f"Graphics not available: {e}")
+    print("This appears to be a headless environment.")
+    print("The game requires OpenGL support to run.")
+    GRAPHICS_AVAILABLE = False
+
+if not GRAPHICS_AVAILABLE:
+    print("\n=== ILK SPACE GAME ===")
+    print("This is a 3D space exploration game that requires graphics support.")
+    print("\nTo run this game, you need:")
+    print("1. A system with OpenGL support")
+    print("2. A desktop environment (not headless/remote)")
+    print("3. Python dependencies installed (see requirements.txt)")
+    print("\nHow to start the game on a local system:")
+    print("1. Clone this repository")
+    print("2. Install dependencies: pip install -r requirements.txt")
+    print("3. Run: python3 space_game.py")
+    print("   OR")
+    print("4. Run: ./run_me.py (sets up virtual environment automatically)")
+    print("\n=== GAME FEATURES ===")
+    print("• Space exploration with multiple randomly generated planets")
+    print("• Landing system - get close to planets to land on them")
+    print("• Trading system - buy and sell resources at different planets")
+    print("• Two game modes: Space (6DOF movement) and Surface (FPS-style)")
+    print("• Inventory and resource management")
+    print("• Save/Load game system")
+    print("• Beautiful rotating skybox")
+    print("• Physics-based movement and collision detection")
+    print("\n=== CONTROLS ===")
+    print("Space Mode:")
+    print("  WASD - Move forward/back/left/right")
+    print("  Space/Shift - Move up/down")
+    print("  Q/E - Roll left/right")
+    print("  Mouse - Look around")
+    print("  F7 - Toggle third-person view")
+    print("\nSurface Mode:")
+    print("  WASD - Walk")
+    print("  Space - Jump (double jump available)")
+    print("  Mouse - Look around")
+    print("  T - Open trading menu (when near trading posts)")
+    print("\nUniversal:")
+    print("  ESC - Pause menu (Save/Load/Quit)")
+    print("  I - Open inventory")
+    print("  F6 - Take screenshot")
+    print("  F8 - Switch between Space and Surface modes")
+    sys.exit(1)
+
 import random
 import numpy as np
-import os
 import math
 import json
 import pickle
@@ -2713,6 +2765,147 @@ class AxisIndicator(Entity):
 # Create the axis indicator
 axis_indicator = AxisIndicator()
 
+# ===== NPC SYSTEM =====
+class NPC(Entity):
+    def __init__(self, npc_type="trader", position=(0,0,0), **kwargs):
+        super().__init__(
+            model='cube',
+            color=color.yellow if npc_type == "trader" else color.orange,
+            position=position,
+            scale=(1, 2, 1),  # Person-sized
+            **kwargs
+        )
+        self.npc_type = npc_type
+        self.move_speed = 2
+        self.move_timer = 0
+        self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+        self.dialogue = self.generate_dialogue()
+        
+        # Add simple eyes
+        self.left_eye = Entity(
+            parent=self,
+            model='cube',
+            color=color.black,
+            scale=(0.1, 0.1, 0.1),
+            position=(-0.2, 0.3, 0.4)
+        )
+        self.right_eye = Entity(
+            parent=self,
+            model='cube',
+            color=color.black,
+            scale=(0.1, 0.1, 0.1),
+            position=(0.2, 0.3, 0.4)
+        )
+        
+        # Add name tag
+        self.name_tag = Text(
+            parent=self,
+            text=self.get_name(),
+            position=(0, 2.5, 0),
+            scale=1.5,
+            billboard=True,
+            color=color.white
+        )
+    
+    def get_name(self):
+        trader_names = ["Bob the Trader", "Space Sally", "Cosmic Carl", "Star Merchant", "Galaxy Gil"]
+        citizen_names = ["Local Citizen", "Planet Dweller", "Colonist", "Resident", "Settler"]
+        
+        if self.npc_type == "trader":
+            return random.choice(trader_names)
+        else:
+            return random.choice(citizen_names)
+    
+    def generate_dialogue(self):
+        if self.npc_type == "trader":
+            return [
+                "Welcome to my trading post!",
+                "Best prices in the galaxy!",
+                "Looking to buy or sell?",
+                "Fresh supplies just arrived!",
+                "Safe travels, space trader!"
+            ]
+        else:
+            return [
+                "Beautiful day on the planet!",
+                "Welcome to our colony!",
+                "The weather's been great lately.",
+                "Enjoy your stay!",
+                "This is a peaceful place."
+            ]
+    
+    def update(self):
+        if not paused and scene_manager.current_state == GameState.TOWN:
+            # Simple wandering AI
+            self.move_timer += time.dt
+            
+            if self.move_timer > random.uniform(2, 5):  # Change direction every 2-5 seconds
+                self.move_timer = 0
+                self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+            
+            # Move around but don't go too far from spawn
+            new_position = self.position + self.move_direction * self.move_speed * time.dt
+            
+            # Keep NPCs within bounds and away from trading post
+            if abs(new_position.x) < 30 and abs(new_position.z) < 30:
+                # Don't walk through buildings
+                can_move = True
+                for entity in scene_manager.town_entities:
+                    if entity.collider and entity != self:
+                        distance = (new_position - entity.position).length()
+                        if distance < 3:  # Stay away from buildings
+                            can_move = False
+                            break
+                
+                if can_move:
+                    self.position = new_position
+                else:
+                    # Change direction if blocked
+                    self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+
+# Space NPCs (other ships)
+class SpaceNPC(Entity):
+    def __init__(self, position=(0,0,0)):
+        super().__init__(
+            model='cube',
+            color=color.random_color(),
+            position=position,
+            scale=(3, 1, 6),  # Ship-like shape
+            texture='white_cube'
+        )
+        self.velocity = Vec3(
+            random.uniform(-5, 5),
+            random.uniform(-2, 2), 
+            random.uniform(-5, 5)
+        )
+        self.ship_type = random.choice(["Trader", "Patrol", "Explorer", "Freighter"])
+        
+        # Add ship name
+        self.name_tag = Text(
+            parent=self,
+            text=f"{self.ship_type} Ship",
+            position=(0, 2, 0),
+            scale=2,
+            billboard=True,
+            color=color.white
+        )
+    
+    def update(self):
+        if not paused and scene_manager.current_state == GameState.SPACE:
+            # Simple movement pattern
+            self.position += self.velocity * time.dt
+            
+            # Keep ships in a reasonable area around player
+            distance_to_player = (self.position - player.position).length()
+            if distance_to_player > 200:
+                # Turn back toward player area
+                direction_to_player = (player.position - self.position).normalized()
+                self.velocity = direction_to_player * 3 + Vec3(
+                    random.uniform(-2, 2),
+                    random.uniform(-1, 1),
+                    random.uniform(-2, 2)
+                )
+
 # Custom Space Controller
 class SpaceController(Entity):
     def __init__(self, **kwargs):
@@ -3153,6 +3346,7 @@ class SceneManager:
         self.current_state = GameState.SPACE
         self.space_entities = []
         self.town_entities = []
+        self.town_npcs = []
         self.town_controller = None
         self.space_controller = None
         self.current_planet = None  # Track which planet player is on
@@ -3311,27 +3505,14 @@ class SceneManager:
             
             self.town_entities.extend([embassy, embassy_sign, crew_quarters, crew_sign, mission_board, mission_sign])
             
-            # Add some NPCs (simple colored cubes for now)
+            # Add some NPCs with proper NPC class
+            self.town_npcs = []
             npc_positions = [(15, 1, 15), (-15, 1, -15), (20, 1, -10), (-10, 1, 20)]
             for i, pos in enumerate(npc_positions):
-                npc = Entity(
-                    model='cube',
-                    color=color.random_color(),
-                    position=pos,
-                    scale=(1, 2, 1),
-                    collider='box'
-                )
-                
-                npc_sign = Text(
-                    parent=npc,
-                    text=f'Citizen {i+1}',
-                    position=(0, 0, 1.1),
-                    scale=50,
-                    color=color.white,
-                    billboard=True
-                )
-                
-                self.town_entities.extend([npc, npc_sign])
+                npc_type = "trader" if i == 0 else "citizen"
+                npc = NPC(npc_type=npc_type, position=pos)
+                self.town_npcs.append(npc)
+                self.town_entities.append(npc)
             
             # Create and position the town controller on the podium
             self.town_controller = TownController()
@@ -6047,6 +6228,17 @@ def input(key):
             os.makedirs('screenshots')
         base.win.saveScreenshot(Filename(f'screenshots/screenshot_{time.time()}.png'))
         print(f'Screenshot saved to screenshots folder')
+    
+    if key == 'e' and not paused:  # Talk to NPCs
+        if scene_manager.current_state == GameState.TOWN:
+            # Check if player is near any NPC
+            player_pos = scene_manager.town_controller.position
+            for npc in scene_manager.town_npcs:
+                distance = (npc.position - player_pos).length()
+                if distance < 5:  # Within talking range
+                    dialogue = random.choice(npc.dialogue)
+                    print(f"💬 {npc.name_tag.text}: {dialogue}")
+                    break
     
     if key == 'f7':  # Toggle view and axis visibility
         if scene_manager.current_state == GameState.SPACE:

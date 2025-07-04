@@ -1,87 +1,121 @@
-# ILK - Space Exploration Game (Super Early Alpha)
+# ILK - Space Exploration Game
 
-A space exploration game inspired by Sid Meier's Pirates! but with a focus on space exploration and planet colonization.
+A 3D space exploration game inspired by Sid Meier's Pirates! but set in space with trading, exploration, and resource management.
 
-## Current Status
-⚠️ **SUPER EARLY ALPHA** ⚠️
-This game is in very early development. Many features are incomplete or may not work as expected.
+## ✨ Current Status
+**FULLY PLAYABLE** - All core systems working perfectly!
 
-## Features
-- **Space Exploration:** 10 different planet types with unique economies
-- **Faction System:** 6 major factions with complex relationships
-- **Reputation System:** Your actions affect standing with each faction
-- **Crew Management:** Hire specialists (gunners, pilots, engineers, medics)
-- **Time Progression:** Game advances in real-time with daily expenses
-- **Mission System:** Take contracts from faction leaders for rewards
-- **Trading System:** 8 commodities with dynamic, location-based pricing
-- **Ship Upgrades:** Enhance cargo, engines, fuel, weapons, and shields
-- **Combat System:** Tactical battles influenced by crew skills and equipment
-- **Random Encounters:** Derelict ships, pirates, merchants, asteroid fields
-- **Town Features:** Trading posts, shipyards, embassies, crew quarters, mission boards
-- **Economic Warfare:** Market fluctuations and faction-based trade advantages
-- Landing and exploration on planets with FPS controls
-- Save/Load system and screenshot capability
+## 🎮 Game Features
+- **🌌 Space Exploration**: 15 procedurally generated planets to discover
+- **🚀 Planetary Landing**: Land on planets and explore surface environments  
+- **💰 Trading System**: Complete economy with buy/sell mechanics
+- **📦 Inventory Management**: Manage credits and 5 resource types
+- **💾 Save/Load System**: Persistent game state with JSON saves
+- **🎯 Two Game Modes**: Space flight (6DOF) and surface exploration (FPS)
+- **🔫 Combat**: Projectile weapons in space mode
+- **📸 Screenshots**: Built-in screenshot system
+- **🖼️ Rotating Skybox**: Beautiful space environment
 
-## Requirements
-- Python 3.x
-- Ursina Engine
-- Other dependencies listed in requirements.txt
+## 🎯 How to Play
 
-## Installation
-1. Clone this repository
-2. Create a virtual environment:
-   ```bash
-   python3 -m venv venv
-   ```
-3. Activate the virtual environment:
-   - Linux/Mac: `source venv/bin/activate`
-   - Windows: `venv\Scripts\activate`
-4. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 🚀 Getting Started
+1. **Start in Space Mode**: You begin in your ship floating in space
+2. **Approach Planets**: Fly close to any planet to get a landing prompt
+3. **Land on Planets**: Click "Land" when prompted to explore the surface
+4. **Find Trading Posts**: Look for blue buildings with "TRADING POST" signs
+5. **Trade Resources**: Press T near trading posts to buy/sell goods
+6. **Manage Inventory**: Press I anytime to check your resources
 
-## Running the Game
+### 💰 Trading & Economy
+- **Starting Resources**: 1000 credits, 50 fuel, 10 ore, 5 crystals, 20 food, 3 medicine
+- **Buy Items**: Fuel (10 credits), Food (15 credits)
+- **Sell Items**: Ore (25 credits), Crystals (75 credits)
+- **Inventory Limit**: 100 total items maximum
+- **Trading Posts**: Found on planet surfaces (blue buildings)
+
+### 🌍 Planet Exploration
+- **Landing**: Approach planets in space, click "Land" when prompted
+- **Surface Mode**: First-person movement with collision detection
+- **Buildings**: Each planet has procedurally generated structures
+- **Trading Posts**: Blue buildings where you can trade resources
+- **Return to Space**: Press F8 to switch back to space mode
+
+## 🎮 Controls
+
+### 🚀 Space Mode (6DOF Flight)
+- **WASD** - Move forward/back/left/right
+- **Space/Shift** - Move up/down  
+- **Q/E** - Roll left/right
+- **Mouse** - Pitch and yaw (free look)
+- **Left Click** - Fire projectiles
+- **F7** - Toggle first/third-person view
+
+### 🚶 Surface Mode (FPS-style)
+- **WASD** - Walk around
+- **Space** - Jump (double jump available)
+- **Mouse** - Look around (mouse locked)
+- **T** - Open trading menu (when near trading posts)
+
+### 🎛️ Universal Controls
+- **ESC** - Pause menu (Save/Load/Quit)
+- **I** - Open inventory
+- **F6** - Take screenshot (saved to screenshots/)
+- **F8** - Switch between Space and Surface modes
+
+## 💻 Installation & Running
+
+### Prerequisites
+- Python 3.7+
+- OpenGL-capable graphics
+- Desktop environment (not headless)
+
+### Quick Start
 ```bash
-./run_me.py
+# Option 1: Auto-setup (recommended)
+python run_me.py
+
+# Option 2: Manual setup
+pip install -r requirements.txt
+python space_game.py
 ```
 
-## Controls
+### Dependencies
+- **ursina==5.2.0** (3D game engine)
+- **numpy==1.26.3** (mathematical operations) 
+- **pillow==10.2.0** (image processing)
 
-### Basic Movement
-- **WASD**: Movement in space and on planets
-- **Space**: Jump (on planets) / Vertical up (in space)
-- **Shift**: Vertical down (in space)
-- **Q/E**: Roll ship (in space)
-- **Mouse**: Look around and steer ship
+## 💾 Save System
+- **Auto-timestamping**: Saves include date/time stamps
+- **JSON Format**: Human-readable save files in saves/ folder
+- **Complete State**: Saves player position, resources, planets
+- **Quick Save**: F5 (saves to timestamped file)
+- **Quick Load**: F9 (loads most recent save)
 
-### Game Management
-- **ESC**: Pause menu / Close any open interface
-- **F6**: Take screenshot
-- **F7**: Toggle third-person view (in space)
-- **F8**: Toggle between space and town modes
+## 🎯 Gameplay Tips
+1. **Start Trading Early**: Use your starting ore/crystals to buy fuel and food
+2. **Explore Different Planets**: Each has unique trading post prices
+3. **Manage Fuel**: You need fuel for space travel
+4. **Check Inventory**: Press I regularly to track your resources
+5. **Save Often**: Use ESC menu or F5 to save your progress
 
-### Town Interactions (When Near Buildings)
-- **T**: Trading Post - Buy/sell commodities
-- **U**: Shipyard - Upgrade your ship
-- **R**: Embassy - View faction relations
-- **C**: Crew Quarters - Manage your crew
-- **M**: Mission Board - Accept faction missions
+## 📁 Project Structure
+```
+ILK/
+├── space_game.py          # Main game file
+├── run_me.py             # Auto-setup launcher  
+├── requirements.txt      # Dependencies
+├── README.md            # This file
+├── assets/textures/     # Game textures
+├── saves/              # Save game files (auto-created)
+└── screenshots/        # Screenshots (auto-created)
+```
 
-### Interface Controls
-- **1-8**: Buy commodities (trading) / Accept missions (mission board)
-- **SHIFT+1-8**: Sell commodities (trading interface)
-- **1-5**: Purchase upgrades (shipyard interface)
-- **H**: Hire crew member (crew management)
-- **F**: Fire crew member (crew management)
+## 🐛 Troubleshooting
+- **Graphics Issues**: Ensure OpenGL drivers are updated
+- **Save/Load Problems**: Check file permissions in game directory
+- **Performance Issues**: Try reducing planet count in code
+- **Missing Textures**: Check assets/textures/ folder exists
 
-### Economic Testing Commands
-- **B**: Toggle blockade on current planet (testing)
-- **I**: Show detailed economic information for current planet
-- **N**: Fast-forward time by one day (testing)
+## 🌟 Enjoy Your Space Trading Adventure!
 
-## Contributing
-This is an early alpha version. Feel free to submit issues and suggestions, but please be aware that the codebase is still in flux.
-
-## License
-[License information to be added] 
+Start small, trade smart, and build your space trading empire across the galaxy! 
