@@ -102,6 +102,9 @@ class MockColor:
         self.orange = "orange"
         self.cyan = "cyan"
         self.light_gray = "light_gray"
+        self.dark_gray = "dark_gray"
+        self.gray = "gray"
+        self.black = "black"
         self.black66 = "black66"
         self.azure = MockAzure()
 
@@ -378,27 +381,27 @@ class PersonalSkill(Enum):
     TRADING = "TRADING"
     DIPLOMACY = "DIPLOMACY"
 
- class CharacterDevelopment:
-     def __init__(self):
-         self.age = 25
-         self.skills = {skill: random.randint(3, 7) for skill in PersonalSkill}
-         self.experience_points = {skill: 0 for skill in PersonalSkill}
-         self.legendary_achievements = []
-         self.years_active = 0
-         
-     def gain_experience(self, skill_type, amount):
-         if skill_type in self.experience_points:
-             self.experience_points[skill_type] += amount
-             required_exp = int(self.skills[skill_type] * 100)
-             if self.experience_points[skill_type] >= required_exp:
-                 self.skills[skill_type] = self.skills[skill_type] + 0.5
-                 self.experience_points[skill_type] = 0
-                 
-     def advance_time(self, days):
-         years_passed = days / 365.0
-         old_age = self.age
-         self.age += years_passed
-         self.years_active += years_passed
+class CharacterDevelopment:
+    def __init__(self):
+        self.age = 25
+        self.skills = {skill: random.randint(3, 7) for skill in PersonalSkill}
+        self.experience_points = {skill: 0 for skill in PersonalSkill}
+        self.legendary_achievements = []
+        self.years_active = 0
+        
+    def gain_experience(self, skill_type, amount):
+        if skill_type in self.experience_points:
+            self.experience_points[skill_type] += amount
+            required_exp = int(self.skills[skill_type] * 100)
+            if self.experience_points[skill_type] >= required_exp:
+                self.skills[skill_type] = self.skills[skill_type] + 0.5
+                self.experience_points[skill_type] = 0
+                
+    def advance_time(self, days):
+        years_passed = days / 365.0
+        old_age = self.age
+        self.age += years_passed
+        self.years_active += years_passed
 
 # Test Suite
 class GameStabilityTester:

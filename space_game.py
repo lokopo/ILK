@@ -2,72 +2,483 @@
 
 import os
 import sys
+import logging
+import traceback
 
-# Add error handling for headless environments
-try:
-    from ursina import *
-    from ursina.prefabs.first_person_controller import FirstPersonController
-    GRAPHICS_AVAILABLE = True
-except Exception as e:
-    print(f"Graphics not available: {e}")
-    print("This appears to be a headless environment.")
-    print("The game requires OpenGL support to run.")
-    GRAPHICS_AVAILABLE = False
+# Setup logging based on environment variables
+verbose = os.environ.get('GAME_VERBOSE', '0') == '1'
+logging.basicConfig(
+    level=logging.DEBUG if verbose else logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('space_game.log', mode='w')
+    ]
+)
+logger = logging.getLogger(__name__)
 
-if not GRAPHICS_AVAILABLE:
-    print("\n=== ILK SPACE GAME ===")
-    print("This is a 3D space exploration game that requires graphics support.")
-    print("\nTo run this game, you need:")
-    print("1. A system with OpenGL support")
-    print("2. A desktop environment (not headless/remote)")
-    print("3. Python dependencies installed (see requirements.txt)")
-    print("\nHow to start the game on a local system:")
-    print("1. Clone this repository")
-    print("2. Install dependencies: pip install -r requirements.txt")
-    print("3. Run: python3 space_game.py")
-    print("   OR")
-    print("4. Run: ./run_me.py (sets up virtual environment automatically)")
-    print("\n=== GAME FEATURES ===")
-    print("• Space exploration with multiple randomly generated planets")
-    print("• Landing system - get close to planets to land on them")
-    print("• Trading system - buy and sell resources at different planets")
-    print("• Two game modes: Space (6DOF movement) and Surface (FPS-style)")
-    print("• Inventory and resource management")
-    print("• Save/Load game system")
-    print("• Beautiful rotating skybox")
-    print("• Physics-based movement and collision detection")
-    print("\n=== CONTROLS ===")
-    print("Space Mode:")
-    print("  WASD - Move forward/back/left/right")
-    print("  Space/Shift - Move up/down")
-    print("  Q/E - Roll left/right")
-    print("  Mouse - Look around")
-    print("  F7 - Toggle third-person view")
-    print("\nSurface Mode:")
-    print("  WASD - Walk")
-    print("  Space - Jump (double jump available)")
-    print("  Mouse - Look around")
-    print("  T - Open trading menu (when near trading posts)")
-    print("\nUniversal:")
-    print("  ESC - Pause menu (Save/Load/Quit)")
-    print("  I - Open inventory")
-    print("  F6 - Take screenshot")
-    print("  F8 - Switch between Space and Surface modes")
-    sys.exit(1)
+# Check if we're in headless mode
+HEADLESS_MODE = os.environ.get('GAME_HEADLESS_MODE', '0') == '1'
+TEST_MODE = os.environ.get('GAME_TEST_MODE', '0') == '1'
+
+logger.info("=== ILK SPACE GAME STARTING ===")
+logger.info(f"Headless mode: {HEADLESS_MODE}")
+logger.info(f"Test mode: {TEST_MODE}")
+logger.info(f"Verbose logging: {verbose}")
+
+# Import appropriate modules based on mode
+if HEADLESS_MODE:
+    logger.info("Loading headless game components...")
+    try:
+        # Import mock Ursina components for headless mode
+        import headless_game_test
+        
+        # Create mock Ursina components
+        Entity = headless_game_test.MockEntity
+        Vec3 = headless_game_test.MockVec3
+        Vec2 = headless_game_test.MockVec3  # Use Vec3 as Vec2 mock
+        time = headless_game_test.MockTime()
+        camera = headless_game_test.MockCamera()
+        color = headless_game_test.MockColor()
+        mouse = headless_game_test.MockMouse()
+        held_keys = {}
+        paused = False
+        
+        # Mock Ursina functions
+        def load_texture(path):
+            return f"texture_{path}"
+        
+        def Text(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def Button(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def Panel(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def clamp(value, min_val, max_val):
+            return max(min_val, min(max_val, value))
+        
+        def raycast(*args, **kwargs):
+            return type('RaycastHit', (), {'hit': False})()
+        
+        def destroy(*args, **kwargs):
+            pass
+        
+        def DirectionalLight(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def AmbientLight(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        # Mock FirstPersonController
+        class FirstPersonController:
+            def __init__(self, **kwargs):
+                self.position = Vec3(0, 0, 0)
+                self.rotation = Vec3(0, 0, 0)
+                self.enabled = True
+                self.speed = 5
+                self.jump_height = 2
+                self.jump_up_time = 0.5
+                self.fall_after = 0.35
+                self.mouse_sensitivity = Vec3(40, 40, 0)
+                self.grounded = True
+                self.y = 0
+                self.gravity = 1
+                self.velocity = Vec3(0, 0, 0)
+                self.on_ground = True
+                self.air_time = 0
+                self.traverse_target = None
+                self.model = None
+                self.parent = None
+                self.third_person = False
+                self.axis_indicator = headless_game_test.MockEntity()
+                
+            def update(self):
+                pass
+                
+            @property
+            def forward(self):
+                return Vec3(0, 0, 1)
+                
+            @property
+            def right(self):
+                return Vec3(1, 0, 0)
+                
+            @property
+            def up(self):
+                return Vec3(0, 1, 0)
+        
+        # Mock application for headless mode
+        class MockApp:
+            def __init__(self, **kwargs):
+                pass
+            def run(self):
+                # Run actual playable game in text mode
+                logger.info("Starting text-based space game...")
+                try:
+                    return self.run_text_game()
+                except Exception as e:
+                    logger.error(f"Text game failed: {e}")
+                    logger.error(traceback.format_exc())
+                    return 1
+            
+            def run_text_game(self):
+                """Run the actual game in text mode"""
+                print("\n" + "="*60)
+                print("🚀 ILK SPACE GAME - TEXT MODE")
+                print("="*60)
+                print("Welcome to the galaxy, Captain!")
+                print("All the features of the 3D game, now in text format!")
+                print("Type 'help' for commands, 'quit' to exit")
+                print("="*60)
+                
+                # Initialize player state in text mode
+                self.text_player_pos = Vec3(0, 0, 0)
+                self.text_current_planet = None
+                self.text_fuel = 100.0
+                self.text_max_fuel = 100.0
+                self.text_in_space = True
+                self.running = True
+                
+                while self.running:
+                    try:
+                        user_input = input("\nSpaceGame> ")
+                        if user_input is None:
+                            continue
+                        command = user_input.strip().lower()
+                        self.handle_text_command(command)
+                    except KeyboardInterrupt:
+                        print("\n🛑 Game interrupted by user")
+                        break
+                    except EOFError:
+                        print("\n👋 Goodbye!")
+                        break
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                
+                print("Thanks for playing ILK Space Game!")
+                return 0
+            
+            def handle_text_command(self, command):
+                """Handle text-mode commands"""
+                if command == "quit" or command == "exit":
+                    self.running = False
+                    
+                elif command == "help":
+                    self.show_text_help()
+                    
+                elif command == "status":
+                    self.show_text_status()
+                    
+                elif command == "planets":
+                    self.show_text_planets()
+                    
+                elif command.startswith("fly "):
+                    planet_name = command[4:].strip()
+                    self.text_fly_to_planet(planet_name)
+                    
+                elif command == "land":
+                    self.text_land()
+                    
+                elif command == "takeoff":
+                    self.text_takeoff()
+                    
+                elif command == "trade":
+                    self.text_trade()
+                    
+                elif command == "wallet":
+                    print(f"💰 Credits: {player_wallet.credits:,}")
+                    
+                elif command == "fleet":
+                    self.show_text_fleet()
+                    
+                elif command == "character":
+                    self.show_text_character()
+                    
+                elif command == "scan":
+                    self.text_scan()
+                    
+                elif command == "contracts":
+                    print("📋 Contract system would be here (k key in 3D mode)")
+                    
+                elif command == "save":
+                    print("💾 Save functionality would call save_game()")
+                    
+                elif command == "test":
+                    print("🧪 Running stability tests...")
+                    headless_game_test.GameStabilityTester().run_all_tests()
+                    
+                else:
+                    print(f"❌ Unknown command: '{command}'. Type 'help' for available commands.")
+            
+            def show_text_help(self):
+                """Show available text commands"""
+                print("\n📚 TEXT MODE COMMANDS:")
+                print("="*40)
+                print("🚀 NAVIGATION:")
+                print("  status          - Show player status")
+                print("  planets         - List all planets")
+                print("  fly <planet>    - Travel to a planet")
+                print("  land            - Land on nearest planet")
+                print("  takeoff         - Take off from planet")
+                print("  scan            - Scan for nearby objects")
+                print("")
+                print("💰 ECONOMY:")
+                print("  trade           - Open trading interface")
+                print("  wallet          - Show current credits")
+                print("")
+                print("🚢 FLEET & CHARACTER:")
+                print("  fleet           - Show fleet status")
+                print("  character       - Show character development")
+                print("  contracts       - Show available contracts")
+                print("")
+                print("🎮 GAME:")
+                print("  save            - Save game")
+                print("  test            - Run stability tests")
+                print("  help            - Show this help")
+                print("  quit            - Exit game")
+                print("="*40)
+            
+            def show_text_status(self):
+                """Show player status in text"""
+                print("\n" + "="*50)
+                print("👨‍🚀 CAPTAIN STATUS")
+                print("="*50)
+                print(f"📍 Position: ({self.text_player_pos.x:.1f}, {self.text_player_pos.y:.1f}, {self.text_player_pos.z:.1f})")
+                print(f"💰 Credits: {player_wallet.credits:,}")
+                print(f"⛽ Fuel: {self.text_fuel:.1f}/{self.text_max_fuel:.1f}")
+                print(f"🌌 Location: {'Space' if self.text_in_space else f'Landed on {self.text_current_planet}'}")
+                print("="*50)
+            
+            def show_text_planets(self):
+                """Show available planets"""
+                print("\n🌍 GALAXY MAP:")
+                print("-"*30)
+                for i, planet in enumerate(planets[:10]):  # Show first 10 planets
+                    distance = (planet.position - self.text_player_pos).length()
+                    print(f"{i+1}. {planet.name} ({planet.planet_type}) - {distance:.1f} units away")
+                print("-"*30)
+                print("Use 'fly <planet_name>' to travel")
+            
+            def text_fly_to_planet(self, planet_name):
+                """Fly to a planet in text mode"""
+                # Find planet by name (partial match)
+                target_planet = None
+                for planet in planets:
+                    if planet_name.lower() in planet.name.lower():
+                        target_planet = planet
+                        break
+                
+                if not target_planet:
+                    print(f"❌ Planet '{planet_name}' not found")
+                    return
+                
+                distance = (target_planet.position - self.text_player_pos).length()
+                fuel_cost = distance * 0.1
+                
+                if fuel_cost > self.text_fuel:
+                    print(f"❌ Not enough fuel! Need {fuel_cost:.1f}, have {self.text_fuel:.1f}")
+                    return
+                
+                print(f"🚀 Flying to {target_planet.name}...")
+                print(f"📏 Distance: {distance:.1f} units")
+                print(f"⛽ Fuel cost: {fuel_cost:.1f}")
+                
+                self.text_player_pos = target_planet.position
+                self.text_fuel -= fuel_cost
+                self.text_in_space = True
+                
+                print(f"✅ Arrived at {target_planet.name}")
+                print(f"🌍 {target_planet.planet_type.title()} planet with {target_planet.population:,} inhabitants")
+            
+            def text_land(self):
+                """Land on nearby planet"""
+                closest_planet = None
+                closest_distance = float('inf')
+                
+                for planet in planets:
+                    distance = (planet.position - self.text_player_pos).length()
+                    if distance < closest_distance:
+                        closest_distance = distance
+                        closest_planet = planet
+                
+                if closest_distance > 5.0:
+                    print("❌ No planet close enough to land. Fly closer first.")
+                    return
+                
+                self.text_current_planet = closest_planet.name
+                self.text_in_space = False
+                print(f"🛬 Landed on {closest_planet.name}")
+                print(f"🏢 Facilities: Trading Post, Fuel Station available")
+            
+            def text_takeoff(self):
+                """Take off from planet"""
+                if self.text_in_space:
+                    print("❌ You're already in space!")
+                    return
+                
+                print(f"🚀 Taking off from {self.text_current_planet}")
+                self.text_in_space = True
+                self.text_current_planet = None
+            
+            def text_trade(self):
+                """Open trading interface in text"""
+                if self.text_in_space:
+                    print("❌ You must land on a planet to trade")
+                    return
+                
+                print(f"\n🏪 TRADING POST - {self.text_current_planet}")
+                print("="*40)
+                print("Available commodities:")
+                print("1. Food - Buy: 10 credits, Sell: 8 credits")
+                print("2. Minerals - Buy: 25 credits, Sell: 20 credits")
+                print("3. Technology - Buy: 50 credits, Sell: 40 credits")
+                print("4. Luxury Goods - Buy: 75 credits, Sell: 60 credits")
+                print("\n💡 Full trading system available in 3D mode!")
+                print("💰 Your credits: {:,}".format(player_wallet.credits))
+            
+            def show_text_fleet(self):
+                """Show fleet status"""
+                fleet = enhanced_features.fleet_manager.fleet
+                if fleet:
+                    print(f"\n🚢 FLEET STATUS ({len(fleet)} ships):")
+                    for i, ship in enumerate(fleet, 1):
+                        print(f"{i}. {ship.name} ({ship.ship_class.value})")
+                        print(f"   Condition: {ship.condition*100:.0f}%")
+                else:
+                    print("🚢 No ships in fleet")
+                    print("💡 Capture ships through boarding in 3D mode!")
+            
+            def show_text_character(self):
+                """Show character development"""
+                char = enhanced_features.character_development
+                print(f"\n👤 CHARACTER DEVELOPMENT:")
+                print(f"Age: {int(char.age)} years old")
+                print(f"Years Active: {char.years_active:.1f}")
+                print("\n📊 SKILLS:")
+                for skill, level in char.skills.items():
+                    print(f"  {skill.value}: {level:.1f}")
+            
+            def text_scan(self):
+                """Scan for nearby objects"""
+                print("📡 SCANNING...")
+                
+                # Show nearby planets
+                nearby_planets = []
+                for planet in planets:
+                    distance = (planet.position - self.text_player_pos).length()
+                    if distance < 100:
+                        nearby_planets.append((planet, distance))
+                
+                if nearby_planets:
+                    print("🌍 Nearby planets:")
+                    for planet, distance in sorted(nearby_planets, key=lambda x: x[1])[:5]:
+                        print(f"  {planet.name} - {distance:.1f} units")
+                else:
+                    print("❌ No planets detected in range")
+                
+                # Show treasure hunt opportunities
+                treasures = enhanced_features.treasure_hunting.scan_for_treasures(self.text_player_pos)
+                if treasures:
+                    print("💎 Treasure sites detected!")
+                else:
+                    print("🔍 No treasure sites in scanning range")
+        
+        # Set up mock app
+        app = MockApp()
+        
+        # Add missing color attributes to avoid runtime errors
+        color.dark_gray = "dark_gray"
+        color.gray = "gray"
+        
+        logger.info("Headless components loaded successfully")
+        GRAPHICS_AVAILABLE = False
+        
+    except Exception as e:
+        logger.error(f"Failed to load headless components: {e}")
+        logger.error(traceback.format_exc())
+        print("\n❌ HEADLESS MODE FAILED TO INITIALIZE")
+        print("This suggests the headless components are not properly installed.")
+        print("Please ensure all dependencies are installed correctly.")
+        sys.exit(1)
+else:
+    # Try to load graphics components
+    try:
+        from ursina import *
+        from ursina.prefabs.first_person_controller import FirstPersonController
+        GRAPHICS_AVAILABLE = True
+        logger.info("Graphics components loaded successfully")
+        
+        # Create Ursina app for GUI mode
+        app = Ursina(borderless=False)  # Make window resizable and movable
+    except Exception as e:
+        logger.error(f"Graphics not available: {e}")
+        logger.error(traceback.format_exc())
+        print(f"\n❌ GRAPHICS INITIALIZATION FAILED")
+        print(f"Error: {e}")
+        print("\nThis appears to be a headless environment or graphics are not available.")
+        print("\n=== SOLUTIONS ===")
+        print("1. Run in headless mode:")
+        print("   python run_me.py --headless")
+        print("2. Run headless stability tests:")
+        print("   python run_me.py --headless --test")
+        print("3. If on a local system with graphics:")
+        print("   - Install OpenGL drivers")
+        print("   - Install pygame: pip install pygame")
+        print("   - Install ursina: pip install ursina")
+        print("   - Ensure DISPLAY environment variable is set")
+        print("\n=== GAME FEATURES ===")
+        print("• Space exploration with multiple randomly generated planets")
+        print("• Enhanced Pirates! features: Fleet management, character development")
+        print("• Landing system - get close to planets to land on them")
+        print("• Trading system - buy and sell resources at different planets")
+        print("• Two game modes: Space (6DOF movement) and Surface (FPS-style)")
+        print("• Inventory and resource management")
+        print("• Save/Load game system")
+        print("• Beautiful rotating skybox")
+        print("• Physics-based movement and collision detection")
+        print("\n=== CONTROLS ===")
+        print("Space Mode:")
+        print("  WASD - Move forward/back/left/right")
+        print("  Space/Shift - Move up/down")
+        print("  Q/E - Roll left/right")
+        print("  Mouse - Look around")
+        print("  F7 - Toggle third-person view")
+        print("\nSurface Mode:")
+        print("  WASD - Walk")
+        print("  Space - Jump (double jump available)")
+        print("  Mouse - Look around")
+        print("  T - Open trading menu (when near trading posts)")
+        print("\nUniversal:")
+        print("  ESC - Pause menu (Save/Load/Quit)")
+        print("  I - Open inventory")
+        print("  F6 - Take screenshot")
+        print("  F8 - Switch between Space and Surface modes")
+        sys.exit(1)
+        
+        GRAPHICS_AVAILABLE = False
 
 import random
-import numpy as np
 import math
 import json
 import pickle
 from datetime import datetime
+
+# Make numpy optional for headless mode demo
+try:
+    import numpy as np
+except ImportError:
+    logger.warning("NumPy not available - some features may be limited")
+    np = None
 
 # Transport System Imports
 from enum import Enum
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 
-app = Ursina(borderless=False)  # Make window resizable and movable
+# App will be created in the appropriate section based on mode
 
 # ===== ENHANCED PIRATES! FEATURES =====
 
