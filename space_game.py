@@ -2,58 +2,203 @@
 
 import os
 import sys
+import logging
+import traceback
 
-# Add error handling for headless environments
-try:
-    from ursina import *
-    from ursina.prefabs.first_person_controller import FirstPersonController
-    GRAPHICS_AVAILABLE = True
-except Exception as e:
-    print(f"Graphics not available: {e}")
-    print("This appears to be a headless environment.")
-    print("The game requires OpenGL support to run.")
-    GRAPHICS_AVAILABLE = False
+# Setup logging based on environment variables
+verbose = os.environ.get('GAME_VERBOSE', '0') == '1'
+logging.basicConfig(
+    level=logging.DEBUG if verbose else logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('space_game.log', mode='w')
+    ]
+)
+logger = logging.getLogger(__name__)
 
-if not GRAPHICS_AVAILABLE:
-    print("\n=== ILK SPACE GAME ===")
-    print("This is a 3D space exploration game that requires graphics support.")
-    print("\nTo run this game, you need:")
-    print("1. A system with OpenGL support")
-    print("2. A desktop environment (not headless/remote)")
-    print("3. Python dependencies installed (see requirements.txt)")
-    print("\nHow to start the game on a local system:")
-    print("1. Clone this repository")
-    print("2. Install dependencies: pip install -r requirements.txt")
-    print("3. Run: python3 space_game.py")
-    print("   OR")
-    print("4. Run: ./run_me.py (sets up virtual environment automatically)")
-    print("\n=== GAME FEATURES ===")
-    print("• Space exploration with multiple randomly generated planets")
-    print("• Landing system - get close to planets to land on them")
-    print("• Trading system - buy and sell resources at different planets")
-    print("• Two game modes: Space (6DOF movement) and Surface (FPS-style)")
-    print("• Inventory and resource management")
-    print("• Save/Load game system")
-    print("• Beautiful rotating skybox")
-    print("• Physics-based movement and collision detection")
-    print("\n=== CONTROLS ===")
-    print("Space Mode:")
-    print("  WASD - Move forward/back/left/right")
-    print("  Space/Shift - Move up/down")
-    print("  Q/E - Roll left/right")
-    print("  Mouse - Look around")
-    print("  F7 - Toggle third-person view")
-    print("\nSurface Mode:")
-    print("  WASD - Walk")
-    print("  Space - Jump (double jump available)")
-    print("  Mouse - Look around")
-    print("  T - Open trading menu (when near trading posts)")
-    print("\nUniversal:")
-    print("  ESC - Pause menu (Save/Load/Quit)")
-    print("  I - Open inventory")
-    print("  F6 - Take screenshot")
-    print("  F8 - Switch between Space and Surface modes")
-    sys.exit(1)
+# Check if we're in headless mode
+HEADLESS_MODE = os.environ.get('GAME_HEADLESS_MODE', '0') == '1'
+TEST_MODE = os.environ.get('GAME_TEST_MODE', '0') == '1'
+
+logger.info("=== ILK SPACE GAME STARTING ===")
+logger.info(f"Headless mode: {HEADLESS_MODE}")
+logger.info(f"Test mode: {TEST_MODE}")
+logger.info(f"Verbose logging: {verbose}")
+
+# Import appropriate modules based on mode
+if HEADLESS_MODE:
+    logger.info("Loading headless game components...")
+    try:
+        # Import mock Ursina components for headless mode
+        import headless_game_test
+        
+        # Create mock Ursina components
+        Entity = headless_game_test.MockEntity
+        Vec3 = headless_game_test.MockVec3
+        time = headless_game_test.MockTime()
+        camera = headless_game_test.MockCamera()
+        color = headless_game_test.MockColor()
+        mouse = headless_game_test.MockMouse()
+        held_keys = {}
+        paused = False
+        
+        # Mock Ursina functions
+        def load_texture(path):
+            return f"texture_{path}"
+        
+        def Text(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def Button(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def Panel(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def clamp(value, min_val, max_val):
+            return max(min_val, min(max_val, value))
+        
+        def raycast(*args, **kwargs):
+            return type('RaycastHit', (), {'hit': False})()
+        
+        def destroy(*args, **kwargs):
+            pass
+        
+        def DirectionalLight(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        def AmbientLight(**kwargs):
+            return headless_game_test.MockEntity(**kwargs)
+        
+        # Mock FirstPersonController
+        class FirstPersonController:
+            def __init__(self, **kwargs):
+                self.position = Vec3(0, 0, 0)
+                self.rotation = Vec3(0, 0, 0)
+                self.enabled = True
+                self.speed = 5
+                self.jump_height = 2
+                self.jump_up_time = 0.5
+                self.fall_after = 0.35
+                self.mouse_sensitivity = Vec3(40, 40, 0)
+                self.grounded = True
+                self.y = 0
+                self.gravity = 1
+                self.velocity = Vec3(0, 0, 0)
+                self.on_ground = True
+                self.air_time = 0
+                self.traverse_target = None
+                self.model = None
+                self.parent = None
+                self.third_person = False
+                self.axis_indicator = headless_game_test.MockEntity()
+                
+            def update(self):
+                pass
+                
+            @property
+            def forward(self):
+                return Vec3(0, 0, 1)
+                
+            @property
+            def right(self):
+                return Vec3(1, 0, 0)
+                
+            @property
+            def up(self):
+                return Vec3(0, 1, 0)
+        
+        # Mock application
+        class MockApp:
+            def __init__(self, **kwargs):
+                pass
+            def run(self):
+                # Run headless game simulation
+                logger.info("Starting headless game simulation...")
+                try:
+                    # Run the headless test instead of the full game
+                    headless_game_test.GameStabilityTester().run_all_tests()
+                    logger.info("Headless simulation completed successfully")
+                except Exception as e:
+                    logger.error(f"Headless simulation failed: {e}")
+                    logger.error(traceback.format_exc())
+                    return 1
+                return 0
+        
+        # Set up mock app
+        app = MockApp()
+        
+        # Add missing color attributes to avoid runtime errors
+        color.dark_gray = "dark_gray"
+        color.gray = "gray"
+        
+        logger.info("Headless components loaded successfully")
+        GRAPHICS_AVAILABLE = False
+        
+    except Exception as e:
+        logger.error(f"Failed to load headless components: {e}")
+        logger.error(traceback.format_exc())
+        print("\n❌ HEADLESS MODE FAILED TO INITIALIZE")
+        print("This suggests the headless components are not properly installed.")
+        print("Please ensure all dependencies are installed correctly.")
+        sys.exit(1)
+else:
+    # Try to load graphics components
+    try:
+        from ursina import *
+        from ursina.prefabs.first_person_controller import FirstPersonController
+        GRAPHICS_AVAILABLE = True
+        logger.info("Graphics components loaded successfully")
+        
+        # Create Ursina app for GUI mode
+        app = Ursina(borderless=False)  # Make window resizable and movable
+    except Exception as e:
+        logger.error(f"Graphics not available: {e}")
+        logger.error(traceback.format_exc())
+        print(f"\n❌ GRAPHICS INITIALIZATION FAILED")
+        print(f"Error: {e}")
+        print("\nThis appears to be a headless environment or graphics are not available.")
+        print("\n=== SOLUTIONS ===")
+        print("1. Run in headless mode:")
+        print("   python run_me.py --headless")
+        print("2. Run headless stability tests:")
+        print("   python run_me.py --headless --test")
+        print("3. If on a local system with graphics:")
+        print("   - Install OpenGL drivers")
+        print("   - Install pygame: pip install pygame")
+        print("   - Install ursina: pip install ursina")
+        print("   - Ensure DISPLAY environment variable is set")
+        print("\n=== GAME FEATURES ===")
+        print("• Space exploration with multiple randomly generated planets")
+        print("• Enhanced Pirates! features: Fleet management, character development")
+        print("• Landing system - get close to planets to land on them")
+        print("• Trading system - buy and sell resources at different planets")
+        print("• Two game modes: Space (6DOF movement) and Surface (FPS-style)")
+        print("• Inventory and resource management")
+        print("• Save/Load game system")
+        print("• Beautiful rotating skybox")
+        print("• Physics-based movement and collision detection")
+        print("\n=== CONTROLS ===")
+        print("Space Mode:")
+        print("  WASD - Move forward/back/left/right")
+        print("  Space/Shift - Move up/down")
+        print("  Q/E - Roll left/right")
+        print("  Mouse - Look around")
+        print("  F7 - Toggle third-person view")
+        print("\nSurface Mode:")
+        print("  WASD - Walk")
+        print("  Space - Jump (double jump available)")
+        print("  Mouse - Look around")
+        print("  T - Open trading menu (when near trading posts)")
+        print("\nUniversal:")
+        print("  ESC - Pause menu (Save/Load/Quit)")
+        print("  I - Open inventory")
+        print("  F6 - Take screenshot")
+        print("  F8 - Switch between Space and Surface modes")
+        sys.exit(1)
+        
+        GRAPHICS_AVAILABLE = False
 
 import random
 import numpy as np
@@ -67,7 +212,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 
-app = Ursina(borderless=False)  # Make window resizable and movable
+# App will be created in the appropriate section based on mode
 
 # ===== ENHANCED PIRATES! FEATURES =====
 
