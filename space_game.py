@@ -3182,34 +3182,25 @@ axis_indicator = AxisIndicator()
 # ===== NPC SYSTEM =====
 class NPC(Entity):
     def __init__(self, npc_type="trader", position=(0,0,0), **kwargs):
-        super().__init__(
-            model='cube',
-            color=color.yellow if npc_type == "trader" else color.orange,
-            position=position,
-            scale=(1, 2, 1),  # Person-sized
-            **kwargs
-        )
+        super().__init__(position=position, **kwargs)
+        # Procedural stick-figure: torso, head, limbs
+        self._torso = Entity(parent=self, model='cube', color=color.yellow if npc_type == "trader" else color.orange, scale=(0.6, 1.2, 0.4), position=(0, 0.6, 0))
+        self._head = Entity(parent=self, model='sphere', color=color.light_gray, scale=0.4, position=(0, 1.4, 0))
+        # Arms
+        Entity(parent=self, model='cube', color=color.gray, scale=(0.15, 0.8, 0.15), position=(0.35, 0.6, 0))
+        Entity(parent=self, model='cube', color=color.gray, scale=(0.15, 0.8, 0.15), position=(-0.35, 0.6, 0))
+        # Legs
+        Entity(parent=self, model='cube', color=color.gray, scale=(0.18, 0.9, 0.18), position=(0.2, -0.1, 0))
+        Entity(parent=self, model='cube', color=color.gray, scale=(0.18, 0.9, 0.18), position=(-0.2, -0.1, 0))
         self.npc_type = npc_type
         self.move_speed = 2
         self.move_timer = 0
         self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
         self.dialogue = self.generate_dialogue()
         
-        # Add simple eyes
-        self.left_eye = Entity(
-            parent=self,
-            model='cube',
-            color=color.black,
-            scale=(0.1, 0.1, 0.1),
-            position=(-0.2, 0.3, 0.4)
-        )
-        self.right_eye = Entity(
-            parent=self,
-            model='cube',
-            color=color.black,
-            scale=(0.1, 0.1, 0.1),
-            position=(0.2, 0.3, 0.4)
-        )
+        # Eyes on head
+        Entity(parent=self._head, model='cube', color=color.black, scale=(0.07, 0.07, 0.07), position=(-0.1, 0.05, 0.18))
+        Entity(parent=self._head, model='cube', color=color.black, scale=(0.07, 0.07, 0.07), position=(0.1, 0.05, 0.18))
         
         # Add name tag
         self.name_tag = Text(
@@ -3250,31 +3241,33 @@ class NPC(Entity):
     
     def update(self):
         if not paused and scene_manager.current_state == GameState.TOWN:
-            # Simple wandering AI
+            # Purposeful wandering with bias toward role-specific building
             self.move_timer += time.dt
-            
-            if self.move_timer > random.uniform(2, 5):  # Change direction every 2-5 seconds
+            if self.move_timer > random.uniform(2, 5):
                 self.move_timer = 0
                 self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
-            
-            # Move around but don't go too far from spawn
+
+            target = None
+            if self.npc_type == "trader":
+                target = getattr(scene_manager, 'trading_post_entity', None)
+            elif self.npc_type == "guard":
+                target = getattr(scene_manager, 'embassy_entity', None)
+            if target is not None:
+                to_target = (target.position - self.position)
+                if to_target.length() > 2:
+                    self.move_direction = (self.move_direction * 0.5 + to_target.normalized() * 0.5).normalized()
+
             new_position = self.position + self.move_direction * self.move_speed * time.dt
-            
-            # Keep NPCs within bounds and away from trading post
             if abs(new_position.x) < 30 and abs(new_position.z) < 30:
-                # Don't walk through buildings
                 can_move = True
                 for entity in scene_manager.town_entities:
-                    if entity.collider and entity != self:
-                        distance = (new_position - entity.position).length()
-                        if distance < 3:  # Stay away from buildings
+                    if entity.collider and entity is not self:
+                        if (new_position - entity.position).length() < 2.5:
                             can_move = False
                             break
-                
                 if can_move:
                     self.position = new_position
                 else:
-                    # Change direction if blocked
                     self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
 
 # Space NPCs (other ships)
@@ -3806,20 +3799,25 @@ class SceneManager:
                 collider='box'
             )
             
-            # Add some buildings with random colors and proper collision, keeping clear of podium
-            for i in range(10):
-                # Keep trying until we find a valid position
-                while True:
-                    x = random.uniform(-40, 40)
-                    z = random.uniform(-40, 40)
-                    # Check if position is far enough from podium (10 units from center)
-                    if math.sqrt(x*x + z*z) > 10:
+            # Seeded filler buildings based on current planet
+            seed_val = 0
+            if self.current_planet is not None and hasattr(self.current_planet, 'name'):
+                seed_val = sum(ord(ch) for ch in self.current_planet.name)
+            rng = random.Random(seed_val)
+            for i in range(12):
+                tries = 0
+                while True and tries < 20:
+                    x = rng.uniform(-40, 40)
+                    z = rng.uniform(-40, 40)
+                    if math.sqrt(x*x + z*z) > 12:
                         break
-                
-                height = random.uniform(4, 8)
+                    tries += 1
+                height = rng.uniform(4, 8)
+                tint = rng.uniform(-0.2, 0.3)
+                themed_color = color.light_gray.tint(tint)
                 building = Entity(
                     model='cube',
-                    color=color.random_color(),
+                    color=themed_color,
                     texture='white_cube',
                     position=(x, height/2, z),
                     scale=(4, height, 4),
