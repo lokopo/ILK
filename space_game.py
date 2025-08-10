@@ -1472,8 +1472,10 @@ class RealisticShipSystems:
     def update(self, current_position):
         """Update ship systems each frame"""
         # Calculate distance traveled
-        if hasattr(self, 'last_position'):
+        if self.last_position is not None:
             distance = (current_position - self.last_position).length()
+        else:
+            distance = 0
             self.distance_traveled += distance
             
             # Consume fuel based on movement
@@ -2339,10 +2341,11 @@ class DynamicContractSystem:
             if random.random() < 0.4:  # 40% chance
                 self.generate_diplomatic_contract()
                 
-        # Generate supply missions based on planet needs
+        # Generate supply missions based on planet needs (use request urgency from enhanced economy)
         for planet_name, economy in enhanced_planet_economies.items():
-            critical_needs = [commodity for commodity, days in economy.calculate_needs().items() 
-                            if days < 5]  # Critical shortage
+            needs = economy.calculate_needs()
+            critical_needs = [commodity for commodity, req in needs.items()
+                              if getattr(req, 'urgency', None) in (UrgencyLevel.CRITICAL, UrgencyLevel.URGENT)]
             if critical_needs and random.random() < 0.5:
                 self.generate_supply_contract(planet_name, critical_needs)
                 
@@ -3761,6 +3764,20 @@ class SceneManager:
         self.town_controller = None
         self.space_controller = None
         self.current_planet = None  # Track which planet player is on
+
+        # Unified on-screen interaction prompt with anti-flicker hysteresis
+        self.interact_prompt = Text(
+            parent=camera.ui,
+            text='',
+            position=(0, -0.45),
+            scale=1,
+            color=color.white,
+            enabled=False
+        )
+        self._prompt_active = False
+        self._prompt_target_kind = None
+        self._prompt_show_threshold = 10.0  # show when closer than this
+        self._prompt_hide_threshold = 12.0  # hide when farther than this
         
     def initialize_space(self):
         self.space_controller = player
@@ -3826,7 +3843,7 @@ class SceneManager:
             # Add trading post sign
             trading_sign = Text(
                 parent=trading_post,
-                text='TRADING POST\n[T] to Trade',
+                text='TRADING POST\nPress E to Trade',
                 position=(0, 0, 3.1),
                 scale=100,
                 color=color.white,
@@ -3834,6 +3851,7 @@ class SceneManager:
             )
             
             self.town_entities.extend([trading_post, trading_sign])
+            self.trading_post_entity = trading_post
             
             # Add shipyard (large orange building on the other side)
             shipyard = Entity(
@@ -3848,7 +3866,7 @@ class SceneManager:
             # Add shipyard sign
             shipyard_sign = Text(
                 parent=shipyard,
-                text='SHIPYARD\n[U] for Upgrades',
+                text='SHIPYARD\nPress E for Upgrades',
                 position=(0, 0, 3.1),
                 scale=100,
                 color=color.white,
@@ -3856,6 +3874,7 @@ class SceneManager:
             )
             
             self.town_entities.extend([shipyard, shipyard_sign])
+            self.shipyard_entity = shipyard
             
             # Add faction embassy (purple building)
             embassy = Entity(
@@ -3869,7 +3888,7 @@ class SceneManager:
             
             embassy_sign = Text(
                 parent=embassy,
-                text='FACTION EMBASSY\n[R] for Relations',
+                text='FACTION EMBASSY\nPress E for Relations',
                 position=(0, 0, 3.1),
                 scale=100,
                 color=color.white,
@@ -3888,7 +3907,7 @@ class SceneManager:
             
             crew_sign = Text(
                 parent=crew_quarters,
-                text='CREW QUARTERS\n[C] for Crew Management',
+                text='CREW QUARTERS\nPress E for Crew',
                 position=(0, 0, 3.1),
                 scale=100,
                 color=color.white,
@@ -3907,7 +3926,7 @@ class SceneManager:
             
             mission_sign = Text(
                 parent=mission_board,
-                text='MISSION BOARD\n[M] for Missions',
+                text='MISSION BOARD\nPress E for Missions',
                 position=(0, 0, 3.1),
                 scale=100,
                 color=color.white,
@@ -3915,6 +3934,9 @@ class SceneManager:
             )
             
             self.town_entities.extend([embassy, embassy_sign, crew_quarters, crew_sign, mission_board, mission_sign])
+            self.embassy_entity = embassy
+            self.crew_quarters_entity = crew_quarters
+            self.mission_board_entity = mission_board
             
             # Add some NPCs with proper NPC class
             self.town_npcs = []
@@ -3930,6 +3952,9 @@ class SceneManager:
             self.town_controller.position = Vec3(0, 1.5, 0)
     
     def switch_to_town(self):
+        # Close any open UIs when switching scenes
+        if 'ui_manager' in globals():
+            ui_manager.hide_all()
         if self.current_state == GameState.SPACE:
             # Store and reset space controller state
             self.space_controller.disable()
@@ -3962,6 +3987,9 @@ class SceneManager:
             self.current_state = GameState.TOWN
     
     def switch_to_space(self):
+        # Close any open UIs when switching scenes
+        if 'ui_manager' in globals():
+            ui_manager.hide_all()
         if self.current_state == GameState.TOWN:
             # Store and reset town controller state
             self.town_controller.disable()
@@ -4097,8 +4125,8 @@ class Planet(Entity):
         )
         # Remove rotation by setting speed to 0
         self.rotation_speed = Vec3(0, 0, 0)
-        # Add landing detection radius
-        self.landing_radius = self.scale * 2
+        # Add landing detection radius (use scalar X component of scale)
+        self.landing_radius = float(self.scale.x) * 2
         # Add name for the planet
         self.name = f"{planet_data['name_prefix']}-{random.randint(100, 999)}"
         
@@ -4132,7 +4160,7 @@ for _ in range(15):
         planet = Planet(position=pos)
         planets.append(planet)
 
-# Landing prompt UI
+# Landing prompt UI (now managed via UIManager)
 landing_prompt = Panel(
     parent=camera.ui,
     model='quad',
@@ -4171,8 +4199,11 @@ cancel_button = Button(
     enabled=False
 )
 
-# Variable to track the planet we're near
+# Landing prompt managed state
+landing_prompt_active = False
 nearby_planet = None
+landing_show_threshold = 35.0
+landing_hide_threshold = 40.0
 
 # ===== TRANSPORT SHIP CLASSES =====
 
@@ -5631,7 +5662,8 @@ class UnifiedTransportSystemManager:
         """Convert a planet to a pirate base"""
         planet.enhanced_economy = PirateBaseEconomy(planet.name, planet)
         planet.planet_type = "pirate_hideout"
-        planet.color = color.dark_red
+        # Fallback to a valid Ursina color similar to dark red
+        planet.color = color.red.tint(-.4)
         print(f"🏴‍☠️ {planet.name} has become a pirate base!")
         return True
 
@@ -5655,6 +5687,8 @@ def initialize_enhanced_economies():
             pirate_base_count += 1
             
     print(f"✅ Enhanced transport system initialized with {pirate_base_count} pirate bases")
+    # Build a global mapping of planet name -> enhanced economy for systems that expect it
+    globals()['enhanced_planet_economies'] = {p.name: p.enhanced_economy for p in planets if hasattr(p, 'enhanced_economy') and p.enhanced_economy}
 
 # Create systems
 random_event_system = RandomEventSystem()
@@ -5666,6 +5700,58 @@ mission_system = MissionSystem()
 
 # Initialize enhanced economies after planets are created
 initialize_enhanced_economies()
+
+# ===== CENTRALIZED UI STATE MANAGER =====
+
+class UIManager:
+    """Central manager to keep UI state consistent and cursor logic correct."""
+    def __init__(self):
+        self._uis = []
+
+    def register(self, ui):
+        if ui not in self._uis:
+            self._uis.append(ui)
+
+    def any_active(self):
+        return any(getattr(ui, 'active', False) for ui in self._uis)
+
+    def update_cursor(self):
+        # Show cursor if any UI is active or game is paused
+        try:
+            paused_state = paused  # may not be defined yet during import
+        except NameError:
+            paused_state = False
+        should_show_cursor = paused_state or self.any_active()
+        mouse.locked = not should_show_cursor
+        mouse.visible = should_show_cursor
+
+    def hide_all(self):
+        for ui in self._uis:
+            if getattr(ui, 'active', False):
+                ui.active = False
+                if hasattr(ui, 'panel'):
+                    ui.panel.enabled = False
+        self.update_cursor()
+
+    def show(self, ui):
+        # Ensure only one UI visible at a time
+        for other in self._uis:
+            if other is not ui and getattr(other, 'active', False):
+                other.active = False
+                if hasattr(other, 'panel'):
+                    other.panel.enabled = False
+        ui.active = True
+        if hasattr(ui, 'panel'):
+            ui.panel.enabled = True
+        self.update_cursor()
+
+    def hide(self, ui):
+        ui.active = False
+        if hasattr(ui, 'panel'):
+            ui.panel.enabled = False
+        self.update_cursor()
+
+ui_manager = UIManager()
 
 # Trading UI
 class TradingUI:
@@ -5728,23 +5814,13 @@ class TradingUI:
         )
         
     def show(self, planet_name):
-        self.active = True
         self.current_planet = planet_name
-        self.panel.enabled = True
+        ui_manager.show(self)
         self.update_display()
         
-        # Pause game and show cursor
-        mouse.locked = False
-        mouse.visible = True
-        
     def hide(self):
-        self.active = False
         self.current_planet = None
-        self.panel.enabled = False
-        
-        # Resume game and hide cursor
-        mouse.locked = True
-        mouse.visible = False
+        ui_manager.hide(self)
         
     def update_display(self):
         if not self.current_planet:
@@ -5861,6 +5937,7 @@ class TradingUI:
 
 # Create trading UI
 trading_ui = TradingUI()
+ui_manager.register(trading_ui)
 
 # Upgrade UI
 class UpgradeUI:
@@ -5913,21 +5990,11 @@ class UpgradeUI:
         )
         
     def show(self):
-        self.active = True
-        self.panel.enabled = True
+        ui_manager.show(self)
         self.update_display()
         
-        # Pause game and show cursor
-        mouse.locked = False
-        mouse.visible = True
-        
     def hide(self):
-        self.active = False
-        self.panel.enabled = False
-        
-        # Resume game and hide cursor
-        mouse.locked = True
-        mouse.visible = False
+        ui_manager.hide(self)
         
     def update_display(self):
         # Update player info
@@ -6009,6 +6076,7 @@ class UpgradeUI:
 
 # Create upgrade UI
 upgrade_ui = UpgradeUI()
+ui_manager.register(upgrade_ui)
 
 # Event UI for random encounters
 class EventUI:
@@ -6047,10 +6115,9 @@ class EventUI:
         self.option_buttons = []
         
     def show_event(self, event):
-        self.active = True
+        ui_manager.hide_all()
         self.current_event = event
-        self.panel.enabled = True
-        
+        ui_manager.show(self)
         # Update event info
         self.title.text = event['name'].upper()
         self.description.text = event['description']
@@ -6077,9 +6144,7 @@ class EventUI:
             button.on_click = lambda action=option['action']: self.handle_option(action)
             self.option_buttons.append(button)
         
-        # Pause game and show cursor
-        mouse.locked = False
-        mouse.visible = True
+        # Cursor handled by UI manager
         
     def handle_option(self, action):
         if action != 'ignore':
@@ -6088,21 +6153,16 @@ class EventUI:
         self.hide()
         
     def hide(self):
-        self.active = False
         self.current_event = None
-        self.panel.enabled = False
-        
         # Clear buttons
         for button in self.option_buttons:
             destroy(button)
         self.option_buttons.clear()
-        
-        # Resume game and hide cursor
-        mouse.locked = True
-        mouse.visible = False
+        ui_manager.hide(self)
 
 # Create event UI
 event_ui = EventUI()
+ui_manager.register(event_ui)
 
 # Faction Relations UI
 class FactionUI:
@@ -6146,21 +6206,11 @@ class FactionUI:
         )
         
     def show(self):
-        self.active = True
-        self.panel.enabled = True
+        ui_manager.show(self)
         self.update_display()
         
-        # Pause game and show cursor
-        mouse.locked = False
-        mouse.visible = True
-        
     def hide(self):
-        self.active = False
-        self.panel.enabled = False
-        
-        # Resume game and hide cursor
-        mouse.locked = True
-        mouse.visible = False
+        ui_manager.hide(self)
         
     def update_display(self):
         faction_text = "FACTION STANDINGS:\n\n"
@@ -6244,21 +6294,11 @@ class CrewUI:
             self.available_for_hire.append(crew_member)
         
     def show(self):
-        self.active = True
-        self.panel.enabled = True
+        ui_manager.show(self)
         self.update_display()
         
-        # Pause game and show cursor
-        mouse.locked = False
-        mouse.visible = True
-        
     def hide(self):
-        self.active = False
-        self.panel.enabled = False
-        
-        # Resume game and hide cursor
-        mouse.locked = True
-        mouse.visible = False
+        ui_manager.hide(self)
         
     def update_display(self):
         # Current crew info
@@ -6372,22 +6412,12 @@ class MissionUI:
         )
         
     def show(self):
-        self.active = True
-        self.panel.enabled = True
+        ui_manager.show(self)
         mission_system.generate_missions()
         self.update_display()
         
-        # Pause game and show cursor
-        mouse.locked = False
-        mouse.visible = True
-        
     def hide(self):
-        self.active = False
-        self.panel.enabled = False
-        
-        # Resume game and hide cursor
-        mouse.locked = True
-        mouse.visible = False
+        ui_manager.hide(self)
         
     def update_display(self):
         mission_text = "AVAILABLE MISSIONS:\n\n"
@@ -6451,53 +6481,98 @@ class MissionUI:
 faction_ui = FactionUI()
 crew_ui = CrewUI()
 mission_ui = MissionUI()
+ui_manager.register(faction_ui)
+ui_manager.register(crew_ui)
+ui_manager.register(mission_ui)
 
 def update():
     global nearby_planet
     
-    if not paused and not trading_ui.active and not upgrade_ui.active and not event_ui.active and not faction_ui.active and not crew_ui.active and not mission_ui.active:
+    if not paused and not ui_manager.any_active():
         if scene_manager.current_state == GameState.SPACE:
-            # Check if player is near any planet
-            nearby_planet = None
+            # Check if player is near any planet (anti-flicker via hysteresis)
+            nearest_planet = None
+            nearest_dist = float('inf')
             for planet in planets:
-                if planet.is_player_in_landing_range(player.position):
-                    nearby_planet = planet
-                    break
-            
-            # Show/hide landing prompt based on proximity
-            if nearby_planet and not landing_prompt.enabled:
-                landing_prompt.enabled = True
-                landing_text.text = f"Approaching {nearby_planet.name}\nDo you want to land?"
-                land_button.enabled = True
-                cancel_button.enabled = True
-                
-                # Freeze player and release mouse
-                player.enabled = False
-                mouse.locked = False
-                mouse.visible = True
-            elif not nearby_planet and landing_prompt.enabled:
-                landing_prompt.enabled = False
-                
-                # Unfreeze player and capture mouse
-                player.enabled = True
-                mouse.locked = True
-                mouse.visible = False
-                
-            # Check for random events when not near planets and not in landing prompt
-            if not nearby_planet and not landing_prompt.enabled:
+                d = (planet.position - player.position).length()
+                if d < nearest_dist:
+                    nearest_dist = d
+                    nearest_planet = planet
+
+            # Evaluate show/hide using thresholds
+            if landing_prompt_active:
+                if nearest_planet is None or nearest_dist > landing_hide_threshold:
+                    landing_prompt.enabled = False
+                    land_button.enabled = False
+                    cancel_button.enabled = False
+                    # Unfreeze player; cursor decided by UI manager
+                    player.enabled = True
+                    if 'ui_manager' in globals():
+                        ui_manager.update_cursor()
+                    globals()['landing_prompt_active'] = False
+                    globals()['nearby_planet'] = None
+                else:
+                    # Keep the panel visible; update text if planet changed
+                    if nearest_planet is not None and nearest_planet is not nearby_planet:
+                        landing_text.text = f"Approaching {nearest_planet.name}\nDo you want to land?"
+                        globals()['nearby_planet'] = nearest_planet
+            else:
+                if nearest_planet is not None and nearest_dist < landing_show_threshold and not ui_manager.any_active():
+                    landing_text.text = f"Approaching {nearest_planet.name}\nDo you want to land?"
+                    landing_prompt.enabled = True
+                    land_button.enabled = True
+                    cancel_button.enabled = True
+                    # Freeze player; let UI manager show cursor
+                    player.enabled = False
+                    globals()['nearby_planet'] = nearest_planet
+                    globals()['landing_prompt_active'] = True
+                    if 'ui_manager' in globals():
+                        ui_manager.update_cursor()
+
+            # Random events only when not near planets and no landing prompt
+            if (nearest_planet is None or nearest_dist > landing_hide_threshold) and not landing_prompt.enabled:
                 random_event_system.check_for_event()
                 
         elif scene_manager.current_state == GameState.TOWN:
             # Check if player is near trading post in town
             if scene_manager.town_controller:
                 player_pos = scene_manager.town_controller.position
-                trading_post_pos = Vec3(10, 3, 0)  # Position of trading post
-                distance = (player_pos - trading_post_pos).length()
-                
-                # Show trading prompt if close to trading post
-                if distance < 10:  # Within 10 units of trading post
-                    # Display prompt on screen
-                    pass  # We'll handle this with T key press
+                # Anti-flicker interact prompt with hysteresis
+                nearest_kind = None
+                nearest_dist = float('inf')
+
+                def consider(kind, ent):
+                    nonlocal nearest_kind, nearest_dist
+                    if ent is None:
+                        return
+                    d = (player_pos - ent.position).length()
+                    if d < nearest_dist:
+                        nearest_dist = d
+                        nearest_kind = kind
+
+                consider('Trade (E)', getattr(scene_manager, 'trading_post_entity', None))
+                consider('Upgrades (E)', getattr(scene_manager, 'shipyard_entity', None))
+                consider('Relations (E)', getattr(scene_manager, 'embassy_entity', None))
+                consider('Crew (E)', getattr(scene_manager, 'crew_quarters_entity', None))
+                consider('Missions (E)', getattr(scene_manager, 'mission_board_entity', None))
+
+                # Decide show/hide with hysteresis thresholds
+                if scene_manager._prompt_active:
+                    if nearest_dist > scene_manager._prompt_hide_threshold:
+                        scene_manager.interact_prompt.enabled = False
+                        scene_manager._prompt_active = False
+                        scene_manager._prompt_target_kind = None
+                    else:
+                        # Keep showing, update text if a different target is clearly closer
+                        if nearest_kind and nearest_kind != scene_manager._prompt_target_kind and nearest_dist < scene_manager._prompt_show_threshold * 0.8:
+                            scene_manager._prompt_target_kind = nearest_kind
+                            scene_manager.interact_prompt.text = f"Press E for {nearest_kind}"
+                else:
+                    if nearest_dist < scene_manager._prompt_show_threshold and nearest_kind:
+                        scene_manager._prompt_active = True
+                        scene_manager._prompt_target_kind = nearest_kind
+                        scene_manager.interact_prompt.text = f"Press E for {nearest_kind}"
+                        scene_manager.interact_prompt.enabled = True
                     
     # Update time system
     time_system.update()
@@ -6572,6 +6647,7 @@ def cancel_landing():
 # Set up button callbacks
 land_button.on_click = land_on_planet
 cancel_button.on_click = cancel_landing
+ui_manager.register(type('LandingWrapper', (), {'active': False, 'panel': landing_prompt}))
 
 # Lighting
 DirectionalLight(y=2, z=3, rotation=(45, -45, 45))
@@ -6601,6 +6677,9 @@ def input(key):
     
     if key == 'escape':
         # Close UIs if open
+        if event_ui.active:
+            event_ui.hide()
+            return
         if trading_ui.active:
             trading_ui.hide()
             return
@@ -6622,17 +6701,15 @@ def input(key):
         save_button.enabled = paused
         load_button.enabled = paused
         quit_button.enabled = paused
-        
+
         if scene_manager.current_state == GameState.SPACE:
             player.enabled = not paused
         else:
             scene_manager.town_controller.enabled = not paused
-            
-        mouse.locked = not paused
-        if paused:
-            mouse.visible = True
-        else:
-            mouse.visible = False
+
+        # Centralized cursor control
+        if 'ui_manager' in globals():
+            ui_manager.update_cursor()
     
     if key == 'f6':  # Screenshot
         if not os.path.exists('screenshots'):
@@ -6640,16 +6717,60 @@ def input(key):
         base.win.saveScreenshot(Filename(f'screenshots/screenshot_{time.time()}.png'))
         print(f'Screenshot saved to screenshots folder')
     
-    if key == 'e' and not paused:  # Talk to NPCs
-        if scene_manager.current_state == GameState.TOWN:
-            # Check if player is near any NPC
+    if key == 'e' and not paused:
+        # Context-sensitive interact
+        if scene_manager.current_state == GameState.TOWN and scene_manager.town_controller:
             player_pos = scene_manager.town_controller.position
+            # Prioritize buildings before NPCs
+            interactables = []
+            if getattr(scene_manager, 'trading_post_entity', None):
+                interactables.append(('trading', scene_manager.trading_post_entity, 10, None))
+            if getattr(scene_manager, 'shipyard_entity', None):
+                interactables.append(('shipyard', scene_manager.shipyard_entity, 10, None))
+            if getattr(scene_manager, 'embassy_entity', None):
+                interactables.append(('embassy', scene_manager.embassy_entity, 10, None))
+            if getattr(scene_manager, 'crew_quarters_entity', None):
+                interactables.append(('crew', scene_manager.crew_quarters_entity, 10, None))
+            if getattr(scene_manager, 'mission_board_entity', None):
+                interactables.append(('mission', scene_manager.mission_board_entity, 10, None))
+
+            # Find nearest interactable within its range
+            nearest = None
+            nearest_dist = float('inf')
+            for kind, ent, rng, extra in interactables:
+                dist = (player_pos - ent.position).length()
+                if dist < rng and dist < nearest_dist:
+                    nearest = (kind, ent)
+                    nearest_dist = dist
+
+            if nearest:
+                ui_manager.hide_all()
+                kind, _ = nearest
+                if kind == 'trading':
+                    if scene_manager.current_planet:
+                        trading_ui.show(scene_manager.current_planet.name)
+                    else:
+                        planet_name = "Local Trading Post"
+                        if planet_name not in market_system.planet_economies:
+                            market_system.generate_market_for_planet(planet_name, "generic")
+                        trading_ui.show(planet_name)
+                elif kind == 'shipyard':
+                    upgrade_ui.show()
+                elif kind == 'embassy':
+                    faction_ui.show()
+                elif kind == 'crew':
+                    crew_ui.show()
+                elif kind == 'mission':
+                    mission_ui.show()
+                return
+
+            # Otherwise, talk to NPCs if close
             for npc in scene_manager.town_npcs:
                 distance = (npc.position - player_pos).length()
-                if distance < 5:  # Within talking range
+                if distance < 5:
                     dialogue = random.choice(npc.dialogue)
                     print(f"💬 {npc.name_tag.text}: {dialogue}")
-                    break
+                    return
     
     if key == 'f7':  # Toggle view and axis visibility
         if scene_manager.current_state == GameState.SPACE:
@@ -6670,10 +6791,11 @@ def input(key):
         # Open trading if near trading post
         if scene_manager.town_controller:
             player_pos = scene_manager.town_controller.position
-            trading_post_pos = Vec3(10, 3, 0)
+            trading_post_pos = getattr(scene_manager, 'trading_post_entity', None).position if getattr(scene_manager, 'trading_post_entity', None) else Vec3(10, 3, 0)
             distance = (player_pos - trading_post_pos).length()
             
             if distance < 10:  # Within range of trading post
+                ui_manager.hide_all()
                 # Use the current planet the player landed on
                 if scene_manager.current_planet:
                     trading_ui.show(scene_manager.current_planet.name)
@@ -6690,10 +6812,11 @@ def input(key):
         # Open upgrades if near shipyard
         if scene_manager.town_controller:
             player_pos = scene_manager.town_controller.position
-            shipyard_pos = Vec3(-10, 3, 0)  # Position of shipyard
+            shipyard_pos = getattr(scene_manager, 'shipyard_entity', None).position if getattr(scene_manager, 'shipyard_entity', None) else Vec3(-10, 3, 0)
             distance = (player_pos - shipyard_pos).length()
             
             if distance < 10:  # Within range of shipyard
+                ui_manager.hide_all()
                 upgrade_ui.show()
             else:
                 print("You need to be closer to the shipyard!")
@@ -6702,10 +6825,11 @@ def input(key):
         # Open faction relations if near embassy
         if scene_manager.town_controller:
             player_pos = scene_manager.town_controller.position
-            embassy_pos = Vec3(0, 3, -10)  # Position of embassy
+            embassy_pos = getattr(scene_manager, 'embassy_entity', None).position if getattr(scene_manager, 'embassy_entity', None) else Vec3(0, 3, -10)
             distance = (player_pos - embassy_pos).length()
             
             if distance < 10:  # Within range of embassy
+                ui_manager.hide_all()
                 faction_ui.show()
             else:
                 print("You need to be closer to the embassy!")
@@ -6714,10 +6838,11 @@ def input(key):
         # Open crew management if near crew quarters
         if scene_manager.town_controller:
             player_pos = scene_manager.town_controller.position
-            crew_quarters_pos = Vec3(0, 3, 10)  # Position of crew quarters
+            crew_quarters_pos = getattr(scene_manager, 'crew_quarters_entity', None).position if getattr(scene_manager, 'crew_quarters_entity', None) else Vec3(0, 3, 10)
             distance = (player_pos - crew_quarters_pos).length()
             
             if distance < 10:  # Within range of crew quarters
+                ui_manager.hide_all()
                 crew_ui.show()
             else:
                 print("You need to be closer to the crew quarters!")
@@ -6726,10 +6851,11 @@ def input(key):
         # Open mission board if near mission board
         if scene_manager.town_controller:
             player_pos = scene_manager.town_controller.position
-            mission_board_pos = Vec3(-10, 3, -10)  # Position of mission board
+            mission_board_pos = getattr(scene_manager, 'mission_board_entity', None).position if getattr(scene_manager, 'mission_board_entity', None) else Vec3(-10, 3, -10)
             distance = (player_pos - mission_board_pos).length()
             
             if distance < 10:  # Within range of mission board
+                ui_manager.hide_all()
                 mission_ui.show()
             else:
                 print("You need to be closer to the mission board!")
