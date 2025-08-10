@@ -3270,6 +3270,13 @@ class NPC(Entity):
                 else:
                     self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
 
+            # Trader simple task loop: idle near trading post to indicate purpose
+            if self.npc_type == "trader" and target is not None:
+                if (self.position - target.position).length() < 6:
+                    # Simulate trading chatter occasionally
+                    if random.random() < 0.01:
+                        print("🛒 Trader: Busy with customers…")
+
 # Space NPCs (other ships)
 class SpaceNPC(Entity):
     def __init__(self, position=(0,0,0)):
@@ -4253,13 +4260,24 @@ class TransportShip(Entity):
         if self.delivered:
             return
             
-        # Move toward destination
+        # Move along waypoints if available, else direct to destination
         if hasattr(self.destination, 'position'):
-            direction = (self.destination.position - self.position).normalized()
+            target_pos = None
+            if hasattr(self, 'waypoints') and self.waypoints:
+                # Peek next waypoint
+                target_pos = self.waypoints[0]
+                if (self.position - target_pos).length() < 6:
+                    # Consume waypoint
+                    self.waypoints.pop(0)
+                    target_pos = self.waypoints[0] if self.waypoints else self.destination.position
+            else:
+                target_pos = self.destination.position
+
+            direction = (target_pos - self.position).normalized()
             speed = getattr(self, 'speed', 10.0)
             self.position += direction * speed * time.dt
-            
-            # Check if arrived
+
+            # Check if arrived at final destination
             if (self.position - self.destination.position).length() < 5:
                 self.on_arrival()
                 
@@ -4356,6 +4374,11 @@ class CargoShip(TransportShip):
         self.speed = 8.0
         self.contract_value = self.calculate_cargo_value()
         self.shields = random.randint(20, 40)
+        # Convoy waypoints
+        if hasattr(origin_planet, 'position') and hasattr(destination_planet, 'position'):
+            self.waypoints = compute_trade_waypoints(origin_planet.position, destination_planet.position, segments=6)
+        else:
+            self.waypoints = []
         
         print(f"🚛 Cargo ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
         print(f"   Cargo: {self.get_cargo_description()}")
@@ -5451,6 +5474,11 @@ class EnhancedPlanetEconomy:
                     total_cost=total_cost
                 )
                 unified_transport_system.cargo_ships.append(cargo_ship)
+                # If destination has close allies, spawn escorts for high-value shipments
+                if total_cost > 5000 and hasattr(requesting_planet, 'faction_id'):
+                    # Find friendly faction (destination's own faction for now)
+                    friendly_faction = requesting_planet.faction_id
+                    unified_transport_system.spawn_escorts_for_cargo(cargo_ship, friendly_faction, num_escorts=2)
                 
                 # Remove goods and track expected delivery
                 self.stockpiles[commodity] -= can_supply
@@ -5755,6 +5783,21 @@ class UnifiedTransportSystemManager:
         print(f"🏴‍☠️ {planet.name} has become a pirate base!")
         return True
 
+    def spawn_escorts_for_cargo(self, cargo_ship, faction_id: str, num_escorts: int = 2):
+        """Spawn escort military ships near a valuable cargo ship."""
+        if 'military_manager' not in globals():
+            return
+        try:
+            for i in range(max(1, num_escorts)):
+                offset = Vec3(random.uniform(-15, 15), 0, random.uniform(-15, 15))
+                pos = cargo_ship.position + offset if hasattr(cargo_ship, 'position') else Vec3(0, 0, 0)
+                escort = MilitaryShip(faction_id, MilitaryShipType.ESCORT, pos, patrol_radius=120)
+                escort.target_position = pos
+                escort.patrol_center = pos
+                military_manager.military_ships.append(escort)
+        except Exception:
+            pass
+
 # Create global unified transport system
 unified_transport_system = UnifiedTransportSystemManager()
 
@@ -5815,6 +5858,28 @@ class TransportContractRegistry:
         data['status'] = 'completed'
 
 contract_registry = TransportContractRegistry()
+
+# ===== TRADE LANE WAYPOINTS =====
+
+def compute_trade_waypoints(origin_pos: 'Vec3', dest_pos: 'Vec3', segments: int = 5):
+    """Create simple intermediate waypoints along a curved corridor between origin and destination.
+    Uses a slight lateral offset to avoid perfectly straight lines (more life-like lanes)."""
+    waypoints = []
+    try:
+        delta = dest_pos - origin_pos
+        right = Vec3(1, 0, 0)
+        lateral = Vec3(delta.z, 0, -delta.x).normalized() if hasattr(delta, 'length') and delta.length() > 0 else right
+        curve_strength = min(50.0, max(10.0, delta.length() * 0.1)) if hasattr(delta, 'length') else 20.0
+        for i in range(1, segments):
+            t = i / segments
+            base = origin_pos + delta * t
+            # Sine-bend offset for a gentle arc
+            offset = lateral * curve_strength * math.sin(math.pi * t)
+            waypoints.append(base + offset)
+    except Exception:
+        pass
+    # Always end at destination
+    return waypoints
 
 def initialize_enhanced_economies():
     """Initialize enhanced economies for all planets"""
