@@ -5364,6 +5364,31 @@ class EnhancedPlanetEconomy:
         """Process incoming message"""
         if message_type == MessageType.GOODS_REQUEST:
             self.handle_goods_request(payload)
+    
+    def calculate_min_acceptable_price(self, commodity):
+        """Supplier's minimum acceptable price per unit based on base price and local surplus."""
+        base_prices = {
+            "food": 10, "minerals": 25, "technology": 50,
+            "luxury_goods": 75, "medicine": 40, "weapons": 60,
+            "fuel": 15, "spices": 35
+        }
+        base = base_prices.get(commodity, 20)
+        production = self.daily_production.get(commodity, 0)
+        consumption = self.daily_consumption.get(commodity, 0)
+        surplus = production - consumption
+        if surplus > 0:
+            return base * 0.9
+        elif surplus < 0:
+            return base * 1.2
+        return base
+    
+    def estimate_shipping_cost_per_unit(self, origin_planet, destination_planet):
+        """Rough per-unit shipping cost proportional to distance."""
+        try:
+            distance = (origin_planet.position - destination_planet.position).length()
+        except Exception:
+            distance = 100.0
+        return max(0.05 * (distance / 100.0), 0.1)
             
     def handle_goods_request(self, request):
         """Evaluate and respond to goods request"""
@@ -5388,8 +5413,21 @@ class EnhancedPlanetEconomy:
                     requesting_planet = planet
                     break
                     
-            if requesting_planet:
-                # Create cargo ship
+            if requesting_planet and hasattr(requesting_planet, 'enhanced_economy'):
+                # Pricing logic: ensure destination offers enough to cover supplier min + shipping + margin
+                unit_min = self.calculate_min_acceptable_price(commodity)
+                unit_ship = self.estimate_shipping_cost_per_unit(self.planet_object, requesting_planet)
+                unit_needed = unit_min + unit_ship + (unit_min * 0.10)
+                if request.max_price < unit_needed:
+                    return
+                total_cost = int(unit_needed * can_supply)
+                dest_econ = requesting_planet.enhanced_economy
+                if dest_econ.credits < total_cost:
+                    return
+                # Reserve credits at destination (escrow-like)
+                dest_econ.credits -= total_cost
+                
+                # Create cargo ship with manifest
                 cargo_manifest = {commodity: can_supply}
                 cargo_ship = CargoShip(
                     self.planet_object,
@@ -5398,14 +5436,16 @@ class EnhancedPlanetEconomy:
                 )
                 unified_transport_system.cargo_ships.append(cargo_ship)
                 
-                # Remove goods from stockpile
+                # Remove goods and track expected delivery
                 self.stockpiles[commodity] -= can_supply
+                current_expected = dest_econ.expected_deliveries.get(commodity, 0)
+                dest_econ.expected_deliveries[commodity] = current_expected + can_supply
                 
-                # Track expected delivery
-                current_expected = requesting_planet.enhanced_economy.expected_deliveries.get(commodity, 0)
-                requesting_planet.enhanced_economy.expected_deliveries[commodity] = current_expected + can_supply
+                # Payment ship returns credits to supplier
+                payment_ship = PaymentShip(requesting_planet, self.planet_object, total_cost)
+                unified_transport_system.payment_ships.append(payment_ship)
                 
-                print(f"📦 {self.planet_name} shipping {can_supply} {commodity} to {request.requesting_planet}")
+                print(f"📦 {self.planet_name} shipping {can_supply} {commodity} to {request.requesting_planet} @ {unit_needed:.1f}/unit (total {total_cost} cr)")
                 
     def auto_start_manufacturing(self):
         """Automatically start manufacturing based on available materials and planet type"""
