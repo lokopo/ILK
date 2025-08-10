@@ -4393,9 +4393,12 @@ class CargoShip(TransportShip):
                 self.destination.enhanced_economy.stockpiles[commodity] = current + quantity
                 
         print(f"✅ Cargo delivered to {getattr(self.destination, 'name', 'Unknown')}: {self.get_cargo_description()}")
+        # Notify contract registry for payment leg
+        if hasattr(self, 'contract_id'):
+            contract_registry.cargo_delivered(self.contract_id)
         
-        # Spawn payment ship
-        if hasattr(self, 'contract_value') and self.contract_value > 0:
+        # Legacy fallback: spawn payment ship based on value if no contract id
+        elif hasattr(self, 'contract_value') and self.contract_value > 0:
             payment_ship = PaymentShip(self.destination, self.origin, self.contract_value)
             if 'unified_transport_system' in globals():
                 unified_transport_system.payment_ships.append(payment_ship)
@@ -4425,6 +4428,9 @@ class PaymentShip(TransportShip):
             self.destination.enhanced_economy.credits += self.credits
             
         print(f"💳 Payment delivered to {getattr(self.destination, 'name', 'Unknown')}: {self.credits} credits")
+        # Notify contract completion
+        if hasattr(self, 'contract_id'):
+            contract_registry.payment_delivered(self.contract_id)
         super().on_arrival()
 
 class PirateRaider(TransportShip):
@@ -4526,9 +4532,11 @@ class PirateRaider(TransportShip):
             # LOGICAL CORRECTION: Increase regional pirate threat
             self.increase_regional_threat(cargo_ship)
             
-            # Remove the cargo ship
+            # Remove the cargo ship and settle contract consequences
             if 'unified_transport_system' in globals() and cargo_ship in unified_transport_system.cargo_ships:
                 unified_transport_system.cargo_ships.remove(cargo_ship)
+                if hasattr(cargo_ship, 'contract_id'):
+                    contract_registry.cargo_lost(cargo_ship.contract_id)
                 destroy(cargo_ship)
                 
             # Return to base with stolen goods
@@ -5427,12 +5435,20 @@ class EnhancedPlanetEconomy:
                 # Reserve credits at destination (escrow-like)
                 dest_econ.credits -= total_cost
                 
-                # Create cargo ship with manifest
+                # Create cargo ship with manifest and register contract
                 cargo_manifest = {commodity: can_supply}
                 cargo_ship = CargoShip(
                     self.planet_object,
                     requesting_planet,
                     cargo_manifest
+                )
+                cargo_ship.contract_id = contract_registry.register_contract(
+                    origin_planet=self.planet_object,
+                    dest_planet=requesting_planet,
+                    commodity=commodity,
+                    quantity=can_supply,
+                    unit_price=unit_needed,
+                    total_cost=total_cost
                 )
                 unified_transport_system.cargo_ships.append(cargo_ship)
                 
@@ -5741,6 +5757,64 @@ class UnifiedTransportSystemManager:
 
 # Create global unified transport system
 unified_transport_system = UnifiedTransportSystemManager()
+
+# ===== TRANSPORT CONTRACT REGISTRY =====
+
+class TransportContractRegistry:
+    """Tracks cargo-payment contracts to ensure persistent consequences."""
+    def __init__(self):
+        self._contracts = {}
+        self._counter = 0
+
+    def _next_id(self) -> str:
+        self._counter += 1
+        return f"CONTRACT-{int(time.time())}-{self._counter}"
+
+    def register_contract(self, origin_planet, dest_planet, commodity, quantity, unit_price, total_cost) -> str:
+        cid = self._next_id()
+        self._contracts[cid] = {
+            'origin': origin_planet,
+            'dest': dest_planet,
+            'commodity': commodity,
+            'quantity': quantity,
+            'unit_price': unit_price,
+            'total_cost': total_cost,
+            'status': 'cargo_in_transit'
+        }
+        return cid
+
+    def cargo_delivered(self, contract_id: str):
+        data = self._contracts.get(contract_id)
+        if not data:
+            return
+        # Spawn payment ship from dest to origin carrying reserved credits
+        payment_ship = PaymentShip(data['dest'], data['origin'], int(data['total_cost']))
+        payment_ship.contract_id = contract_id
+        unified_transport_system.payment_ships.append(payment_ship)
+        data['status'] = 'payment_in_transit'
+
+    def cargo_lost(self, contract_id: str):
+        data = self._contracts.get(contract_id)
+        if not data:
+            return
+        # Refund escrow to destination since goods never arrived
+        if hasattr(data['dest'], 'enhanced_economy') and data['dest'].enhanced_economy:
+            data['dest'].enhanced_economy.credits += int(data['total_cost'])
+            # Remove expected delivery
+            exp = data['dest'].enhanced_economy.expected_deliveries
+            exp[data['commodity']] = max(0, exp.get(data['commodity'], 0) - data['quantity'])
+        data['status'] = 'failed_cargo_lost'
+
+    def payment_delivered(self, contract_id: str):
+        data = self._contracts.get(contract_id)
+        if not data:
+            return
+        # Credit supplier upon payment arrival
+        if hasattr(data['origin'], 'enhanced_economy') and data['origin'].enhanced_economy:
+            data['origin'].enhanced_economy.credits += int(data['total_cost'])
+        data['status'] = 'completed'
+
+contract_registry = TransportContractRegistry()
 
 def initialize_enhanced_economies():
     """Initialize enhanced economies for all planets"""
