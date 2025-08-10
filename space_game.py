@@ -2400,21 +2400,21 @@ class DynamicContractSystem:
         
     def generate_escort_contract(self):
         """Generate contract to escort valuable cargo"""
-        cargo_ship = random.choice(unified_transport_system.cargo_ships)
-        if not hasattr(cargo_ship, 'cargo_manifest'):
+        # Pick an actual high-value in-flight cargo
+        viable = [cs for cs in unified_transport_system.cargo_ships if hasattr(cs, 'cargo') and cs.cargo]
+        if not viable:
             return
-            
-        cargo_value = sum(cargo_ship.cargo_manifest.values()) * 1000  # Estimate value
+        cargo_ship = max(viable, key=lambda cs: sum(cs.cargo.values()))
+        cargo_value = sum(cargo_ship.cargo.values()) * 1000
         
         contract = Contract(
             contract_id=f"escort_{cargo_ship.ship_id}_{int(time.time())}",
             mission_type=MissionType.MILITARY_ESCORT,
             client_faction='merchant_guild',
-            title=f"Escort Cargo Ship {cargo_ship.ship_id}",
-            description=f"Escort valuable cargo ship from {cargo_ship.origin_planet} "
-                       f"to {cargo_ship.destination_planet}. Pirates are active in the area.",
+            title=f"Escort Cargo Ship to {cargo_ship.destination_planet}",
+            description=f"Escort valuable cargo from {cargo_ship.origin_planet} to {cargo_ship.destination_planet}. Pirates are active.",
             objectives=[
-                f"Escort cargo ship {cargo_ship.ship_id}",
+                f"Rendezvous with convoy en route",
                 "Defend against pirate attacks",
                 "Ensure safe delivery"
             ],
@@ -4420,6 +4420,19 @@ class CargoShip(TransportShip):
         
         print(f"🚛 Cargo ship launched: {getattr(origin_planet, 'name', 'Unknown')} → {getattr(destination_planet, 'name', 'Unknown')}")
         print(f"   Cargo: {self.get_cargo_description()}")
+
+    # Compatibility for systems referencing legacy attributes
+    @property
+    def cargo_manifest(self):
+        return self.cargo
+
+    @property
+    def origin_planet(self):
+        return getattr(self.origin, 'name', 'Unknown')
+
+    @property
+    def destination_planet(self):
+        return getattr(self.destination, 'name', 'Unknown')
         
     def calculate_cargo_value(self):
         """Calculate total value of cargo"""
