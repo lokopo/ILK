@@ -4282,6 +4282,8 @@ class TransportShip(Entity):
         self._trail_nodes = []
         # Basic health model for combat persistence
         self.health = 100
+        self.retreating = False
+        self.last_retreat_check = 0.0
         
     def update(self):
         if self.delivered:
@@ -4335,6 +4337,37 @@ class TransportShip(Entity):
                     destroy(old)
             except Exception:
                 pass
+
+        # Check for retreat if heavily damaged
+        self.last_retreat_check += time.dt
+        if not self.retreating and self.health <= 25 and self.last_retreat_check > 2.0:
+            self.last_retreat_check = 0.0
+            self.start_retreat()
+
+    def start_retreat(self):
+        """When damaged, retreat toward origin or nearest faction planet; increase speed."""
+        try:
+            self.retreating = True
+            # Increase speed modestly during retreat
+            self.speed = getattr(self, 'speed', 8.0) * 1.5
+            # Choose retreat target: origin planet if available
+            retreat_target = self.origin if hasattr(self, 'origin') else None
+            # Fallback: nearest planet
+            if not retreat_target and 'planets' in globals():
+                nearest = None
+                best = 1e9
+                for p in planets:
+                    if hasattr(p, 'position'):
+                        d = (p.position - self.position).length()
+                        if d < best:
+                            best = d
+                            nearest = p
+                retreat_target = nearest
+            if retreat_target and hasattr(retreat_target, 'position'):
+                self.waypoints = [retreat_target.position]
+                self.destination = retreat_target
+        except Exception:
+            pass
                 
     def check_player_encounter(self):
         """Check if player is near this ship"""
