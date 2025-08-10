@@ -4265,6 +4265,9 @@ class TransportShip(Entity):
         self.ship_type = ship_type
         self.delivered = False
         self.encounter_triggered = False
+        # Visual trail (simple breadcrumbs)
+        self._trail_timer = 0.0
+        self._trail_nodes = []
         
     def update(self):
         if self.delivered:
@@ -4295,6 +4298,29 @@ class TransportShip(Entity):
                 
         # Check for player encounters
         self.check_player_encounter()
+
+        # LOD: reduce child visuals when far from player
+        try:
+            if scene_manager.current_state == GameState.SPACE and scene_manager.space_controller:
+                d_player = (self.position - scene_manager.space_controller.position).length()
+                # If very far, disable children for performance
+                for child in self.children:
+                    child.enabled = d_player < 400
+        except Exception:
+            pass
+
+        # Drop simple trail nodes at intervals
+        self._trail_timer += time.dt
+        if self._trail_timer > 0.6:
+            self._trail_timer = 0.0
+            try:
+                node = Entity(model='sphere', scale=0.2, color=color.white66, position=self.position)
+                self._trail_nodes.append(node)
+                if len(self._trail_nodes) > 25:
+                    old = self._trail_nodes.pop(0)
+                    destroy(old)
+            except Exception:
+                pass
                 
     def check_player_encounter(self):
         """Check if player is near this ship"""
