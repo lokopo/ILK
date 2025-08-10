@@ -1946,6 +1946,18 @@ class MilitaryShip(Entity):
                 damage = random.randint(10, 25)
                 combat_system.take_damage(damage)
                 print(f"💥 Military ship hit player for {damage} damage!")
+            else:
+                # Attempt to damage nearby hostile transport ships
+                for cs in unified_transport_system.cargo_ships + unified_transport_system.raiders + unified_transport_system.message_ships:
+                    try:
+                        if (cs.position - self.position).length() < 25:
+                            if hasattr(cs, 'take_damage'):
+                                dmg = random.randint(8, 20)
+                                cs.take_damage(dmg)
+                                print(f"💥 {self.faction_id} hit hostile ship for {dmg} damage")
+                                break
+                    except Exception:
+                        continue
             
 class WeatherSystem:
     """Dynamic weather events that affect gameplay"""
@@ -4268,6 +4280,8 @@ class TransportShip(Entity):
         # Visual trail (simple breadcrumbs)
         self._trail_timer = 0.0
         self._trail_nodes = []
+        # Basic health model for combat persistence
+        self.health = 100
         
     def update(self):
         if self.delivered:
@@ -4357,6 +4371,39 @@ class TransportShip(Entity):
         """Override in subclasses"""
         self.delivered = True
         # Removal is handled by transport manager after update loop to avoid mid-frame node issues
+
+    def take_damage(self, amount: int):
+        try:
+            self.health -= int(amount)
+            if self.health <= 0:
+                self.on_destroyed()
+        except Exception:
+            pass
+
+    def on_destroyed(self):
+        # Contract consequence for cargo
+        try:
+            if isinstance(self, CargoShip) and hasattr(self, 'contract_id'):
+                contract_registry.cargo_lost(self.contract_id)
+        except Exception:
+            pass
+        # Remove from system lists and destroy
+        try:
+            lists = [
+                unified_transport_system.cargo_ships,
+                unified_transport_system.message_ships,
+                unified_transport_system.payment_ships,
+                unified_transport_system.raiders,
+                unified_transport_system.smugglers
+            ]
+            for lst in lists:
+                if self in lst:
+                    lst.remove(self)
+        except Exception:
+            pass
+        for n in getattr(self, '_trail_nodes', []):
+            destroy(n)
+        destroy(self)
 
 class MessageShip(TransportShip):
     """Ship carrying physical letters between planets"""
