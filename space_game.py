@@ -1904,8 +1904,10 @@ class MilitaryShip(Entity):
         for cargo_ship in unified_transport_system.cargo_ships:
             if hasattr(cargo_ship, 'position'):
                 distance = (self.position - cargo_ship.position).length()
-                if distance < 100:  # Within escort range
-                    self.target_position = cargo_ship.position + Vec3(10, 0, 10)  # Stay nearby
+                if distance < 150:  # Within escort range
+                    # Follow cargo ship's current target (waypoint or destination) for tighter convoying
+                    follow_pos = getattr(cargo_ship, 'current_target_pos', cargo_ship.position)
+                    self.target_position = follow_pos + Vec3(8, 0, 8)
                     break
                     
     def check_for_hostiles(self):
@@ -3270,12 +3272,20 @@ class NPC(Entity):
                 else:
                     self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
 
-            # Trader simple task loop: idle near trading post to indicate purpose
+            # Trader simple task loop: idle near trading post to indicate purpose and nudge economy
             if self.npc_type == "trader" and target is not None:
                 if (self.position - target.position).length() < 6:
                     # Simulate trading chatter occasionally
                     if random.random() < 0.01:
                         print("🛒 Trader: Busy with customers…")
+                    # Slightly increase local market demand signal
+                    if random.random() < 0.005 and scene_manager.current_planet:
+                        planet_name = scene_manager.current_planet.name
+                        if planet_name in market_system.planet_economies:
+                            econ = market_system.planet_economies[planet_name]
+                            # Small random consumption bump to simulate foot traffic
+                            commodity = random.choice(["food", "medicine", "fuel"]) if econ else "food"
+                            econ.stockpiles[commodity] = max(0, econ.stockpiles.get(commodity, 0) - 1)
 
 # Space NPCs (other ships)
 class SpaceNPC(Entity):
@@ -4275,6 +4285,8 @@ class TransportShip(Entity):
 
             direction = (target_pos - self.position).normalized()
             speed = getattr(self, 'speed', 10.0)
+            # Expose target for escorts/AI consumers
+            self.current_target_pos = target_pos
             self.position += direction * speed * time.dt
 
             # Check if arrived at final destination
