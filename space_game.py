@@ -3828,10 +3828,17 @@ class SceneManager:
             # Add ground first, then podium, then buildings
             self.town_entities.extend([ground, podium])
             
-            # Add trading post (large blue building near the podium)
+            # Determine faction theme color for this planet
+            faction_col = color.white
+            if self.current_planet is not None and hasattr(self.current_planet, 'faction_id'):
+                fac_id = self.current_planet.faction_id
+                if fac_id in faction_system.factions:
+                    faction_col = faction_system.factions[fac_id].color
+
+            # Add trading post (large themed building near the podium)
             trading_post = Entity(
                 model='cube',
-                color=color.blue,
+                color=color.azure.tint(-.1) * 0.5 + faction_col * 0.5,
                 texture='white_cube',
                 position=(10, 3, 0),  # Next to podium
                 scale=(6, 6, 6),
@@ -3851,10 +3858,10 @@ class SceneManager:
             self.town_entities.extend([trading_post, trading_sign])
             self.trading_post_entity = trading_post
             
-            # Add shipyard (large orange building on the other side)
+            # Add shipyard (large themed building on the other side)
             shipyard = Entity(
                 model='cube',
-                color=color.orange,
+                color=color.orange.tint(-.1) * 0.5 + faction_col * 0.5,
                 texture='white_cube',
                 position=(-10, 3, 0),  # Opposite side from trading post
                 scale=(6, 6, 6),
@@ -3874,10 +3881,10 @@ class SceneManager:
             self.town_entities.extend([shipyard, shipyard_sign])
             self.shipyard_entity = shipyard
             
-            # Add faction embassy (purple building)
+            # Add faction embassy (themed building)
             embassy = Entity(
                 model='cube',
-                color=color.violet,
+                color=faction_col.tint(-.2),
                 texture='white_cube',
                 position=(0, 3, -10),  # Behind podium
                 scale=(6, 6, 6),
@@ -3893,10 +3900,10 @@ class SceneManager:
                 billboard=True
             )
             
-            # Add crew quarters (green building)
+            # Add crew quarters (themed building)
             crew_quarters = Entity(
                 model='cube',
-                color=color.lime,
+                color=color.lime.tint(-.2) * 0.5 + faction_col * 0.5,
                 texture='white_cube',
                 position=(0, 3, 10),  # In front of podium
                 scale=(6, 6, 6),
@@ -3912,10 +3919,10 @@ class SceneManager:
                 billboard=True
             )
             
-            # Add mission board (yellow building)
+            # Add mission board (themed building)
             mission_board = Entity(
                 model='cube',
-                color=color.gold,
+                color=color.gold.tint(-.2) * 0.5 + faction_col * 0.5,
                 texture='white_cube',
                 position=(-10, 3, -10),  # Corner position
                 scale=(6, 6, 6),
@@ -3935,6 +3942,16 @@ class SceneManager:
             self.embassy_entity = embassy
             self.crew_quarters_entity = crew_quarters
             self.mission_board_entity = mission_board
+
+            # Faction banners on buildings (simple quads)
+            for b in [trading_post, shipyard, embassy, crew_quarters, mission_board]:
+                Entity(parent=b, model='quad', color=faction_col, scale=(1.2, 1.8), position=(0, 2.5, 3.05))
+
+            # Add some point lights near core buildings for mood
+            Entity.add_to_class('PointLight', Entity)  # no-op alias for readability
+            Entity(parent=trading_post, light=PointLight, y=4, color=faction_col)
+            Entity(parent=shipyard, light=PointLight, y=4, color=color.orange)
+            Entity(parent=embassy, light=PointLight, y=4, color=faction_col)
             
             # Add some NPCs with proper NPC class
             self.town_npcs = []
