@@ -4217,11 +4217,16 @@ class TransportShip(Entity):
         else:
             start_pos = Vec3(0, 0, 0)
             
-        super().__init__(
-            model='cube',
-            position=start_pos,
-            **kwargs
-        )
+        # Procedural ship geometry (basic kitbash): hull + nacelles + cargo pods
+        super().__init__(position=start_pos, **kwargs)
+        self.model = None
+        hull = Entity(parent=self, model='capsule', scale=(0.6, 0.6, 2.2), color=color.light_gray)
+        # Side nacelles
+        Entity(parent=self, model='cube', scale=(0.2, 0.2, 0.8), position=(0.6, 0, -0.3), color=color.gray)
+        Entity(parent=self, model='cube', scale=(0.2, 0.2, 0.8), position=(-0.6, 0, -0.3), color=color.gray)
+        # Cargo pods for cargo ships
+        if getattr(self, 'ship_type', '') in ("CARGO", "PAYMENT"):
+            Entity(parent=self, model='cube', scale=(0.5, 0.5, 0.5), position=(0.0, -0.5, -0.2), color=color.orange if self.ship_type=="CARGO" else color.yellow)
         
         self.origin = origin_planet
         self.destination = destination_planet
@@ -4249,9 +4254,16 @@ class TransportShip(Entity):
     def check_player_encounter(self):
         """Check if player is near this ship"""
         if hasattr(scene_manager, 'space_controller') and scene_manager.space_controller:
-            player_pos = scene_manager.space_controller.position
-            distance = (self.position - player_pos).length()
-            
+            # Guard against empty/destroyed nodepaths
+            try:
+                player_pos = scene_manager.space_controller.position
+                _ = self.position  # access to ensure node exists
+            except Exception:
+                return
+            try:
+                distance = (self.position - player_pos).length()
+            except Exception:
+                return
             if distance < 30 and not self.encounter_triggered:
                 self.trigger_player_encounter()
                 
@@ -4273,7 +4285,7 @@ class TransportShip(Entity):
     def on_arrival(self):
         """Override in subclasses"""
         self.delivered = True
-        destroy(self)
+        # Removal is handled by transport manager after update loop to avoid mid-frame node issues
 
 class MessageShip(TransportShip):
     """Ship carrying physical letters between planets"""
@@ -5622,6 +5634,11 @@ class UnifiedTransportSystemManager:
             if ship in ship_list:
                 ship_list.remove(ship)
                 break
+        # Defer destruction to here to avoid accessing a destroyed NodePath mid-update
+        try:
+            destroy(ship)
+        except Exception:
+            pass
                 
     def get_statistics(self):
         """Get comprehensive transport statistics"""
