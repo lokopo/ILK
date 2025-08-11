@@ -719,7 +719,7 @@ class ShipBoardingSystem:
     def __init__(self):
         self.boarding_active = False
         
-    def initiate_boarding(self, target_ship_type, boarding_action):
+    def initiate_boarding(self, target_ship_type, boarding_action, skill_modifier: float = 0.0, target_faction: str = 'independent'):
         print(f"🚀 Initiating boarding: {boarding_action.value}")
         
         success_chances = {
@@ -728,12 +728,28 @@ class ShipBoardingSystem:
             BoardingAction.NEGOTIATED_SURRENDER: 0.4
         }
         
-        if random.random() < success_chances[boarding_action]:
+        # Apply skill modifier (clamped)
+        base = success_chances[boarding_action]
+        mod = max(-0.25, min(0.25, skill_modifier))
+        chance = max(0.05, min(0.95, base + mod))
+        if random.random() < chance:
             cargo_value = random.randint(15000, 80000)
             ship_condition = random.uniform(0.6, 1.0)
             
             print(f"✅ Boarding successful! Captured {cargo_value} credits worth of cargo.")
             print(f"Ship condition: {ship_condition*100:.0f}%")
+            
+            # Reputation/heat consequences for aggression
+            try:
+                if target_faction in faction_system.factions:
+                    # Negative reputation hit for boarding non-pirate factions
+                    if target_faction != 'outer_rim_pirates':
+                        faction_system.change_reputation(target_faction, -5)
+                        faction_system.add_heat(target_faction, 10)
+                    else:
+                        faction_system.change_reputation('outer_rim_pirates', -2)
+            except Exception:
+                pass
             
             if ship_condition > 0.7:
                 # Offer to add ship to fleet
@@ -1047,6 +1063,10 @@ class PlanetEconomy:
             self.recent_attacks = 0
         self.recent_attacks += 1
         print(f"⚠️ {self.planet_name} records pirate attack! (Recent attacks: {self.recent_attacks})")
+        # Increase local security budget over time when attacked
+        if self.recent_attacks % 3 == 0:
+            # Hire more security which can spawn additional escorts for local shipments indirectly
+            self.hire_security('HIGH')
         
     def get_available_supply(self, commodity):
         """How much of this commodity can be purchased"""
@@ -1161,14 +1181,18 @@ class PlanetEconomy:
         
     def trade_transaction(self, commodity, quantity, is_player_buying):
         """Execute a trade and update stockpiles"""
+        # Clamp quantity to sane range
+        if quantity <= 0:
+            return 0
         if is_player_buying:
-            # Player buying from planet
+            # Player buying from planet: cannot go below 0 and not below strategic reserve
             available = self.get_available_supply(commodity)
-            actual_quantity = min(quantity, available)
-            self.stockpiles[commodity] -= actual_quantity
+            actual_quantity = max(0, min(quantity, available))
+            self.stockpiles[commodity] = max(0, self.stockpiles.get(commodity, 0) - actual_quantity)
         else:
             # Player selling to planet
-            self.stockpiles[commodity] += quantity
+            before = self.stockpiles.get(commodity, 0)
+            self.stockpiles[commodity] = max(0, before + quantity)
             actual_quantity = quantity
             
         # Track trade volume for market effects
@@ -1227,7 +1251,31 @@ class MarketSystem:
             return 0
             
         economy = self.planet_economies[planet_name]
-        return economy.trade_transaction(commodity_name, quantity, is_player_buying)
+        # Law/heat: contraband detection and fines at strict ports
+        result = economy.trade_transaction(commodity_name, quantity, is_player_buying)
+        try:
+            # Define contraband by faction policy (simplified)
+            strict_factions = {'terran_federation', 'mars_republic'}
+            contraband = {'weapons', 'narcotics'}
+            planet_faction = getattr(next((p for p in planets if getattr(p, 'name', None) == planet_name), None), 'faction_id', None)
+            if planet_faction in strict_factions and not is_player_buying and commodity_name in contraband:
+                # Random scan chance influenced by heat
+                base_scan = 0.15
+                heat = faction_system.player_heat.get(planet_faction, 0)
+                scan_chance = min(0.8, base_scan + heat * 0.01)
+                if random.random() < scan_chance:
+                    fine = max(100, market_system.get_sell_price(planet_name, commodity_name) * quantity)
+                    if player_wallet.can_afford(fine):
+                        player_wallet.spend(fine)
+                        print(f"🚨 Contraband detected at {planet_name}. Fine paid: {fine} credits")
+                    else:
+                        # Confiscation: revert sale
+                        economy.stockpiles[commodity_name] = max(0, economy.stockpiles.get(commodity_name, 0) - result)
+                        print(f"🚨 Contraband confiscated at {planet_name}. Sale reversed")
+                    faction_system.add_heat(planet_faction, 20)
+        except Exception:
+            pass
+        return result
         
     def daily_economic_update(self):
         """Update all planet economies daily"""
@@ -1793,6 +1841,70 @@ class EnhancedManufacturing:
 # Create global manufacturing system
 enhanced_manufacturing = EnhancedManufacturing()
 
+# ===== MANUFACTURING UI =====
+class ManufacturingUI:
+    def __init__(self):
+        self.active = False
+        self.current_planet = None
+        self.panel = Panel(parent=camera.ui, model='quad', scale=(0.8, 0.7), color=color.black66, enabled=False)
+        self.title = Text(parent=self.panel, text='MANUFACTURING', position=(0, 0.32), scale=1.6, color=color.cyan)
+        self.status_text = Text(parent=self.panel, text='', position=(-0.35, 0.15), scale=0.9, color=color.white)
+        self.queue_text = Text(parent=self.panel, text='', position=(-0.35, -0.05), scale=0.9, color=color.white)
+        self.instructions = Text(parent=self.panel, text='1-4: Start recipe | ESC to close', position=(0, -0.32), scale=0.9, color=color.light_gray)
+    
+    def show(self, planet_name):
+        self.current_planet = planet_name
+        ui_manager.show(self)
+        self.update_display()
+    
+    def hide(self):
+        self.current_planet = None
+        ui_manager.hide(self)
+    
+    def update_display(self):
+        if not self.current_planet:
+            return
+        # Materials are planet stockpiles
+        econ = enhanced_planet_economies.get(self.current_planet)
+        stock = econ.stockpiles if econ else {}
+        # Crew effectiveness by skill
+        crew_eff = {
+            'engineering': ship_systems.get_crew_effectiveness('engineering'),
+            'medical': ship_systems.get_crew_effectiveness('medical'),
+            'science': ship_systems.get_crew_effectiveness('science')
+        }
+        # Status
+        status_lines = [f"Materials: {', '.join([f'{k}:{v}' for k,v in list(stock.items())[:6]])}"]
+        self.status_text.text = "\n".join(status_lines)
+        # Queue/options
+        recipes = list(enhanced_manufacturing.recipes.keys())
+        queue_lines = ["RECIPES:"]
+        for i, name in enumerate(recipes[:4]):
+            req = enhanced_manufacturing.recipes[name].inputs
+            queue_lines.append(f"{i+1}. {name} (needs: {', '.join([f'{k}:{v}' for k,v in req.items()])})")
+        # Active processes
+        active = enhanced_manufacturing.get_manufacturing_status(self.current_planet)
+        if active:
+            queue_lines.append("\nIN PRODUCTION:")
+            for r, st in active.items():
+                queue_lines.append(f"- {st['product']} {st['progress']:.0f}% | time left ~{st['time_remaining']:.0f}s")
+        self.queue_text.text = "\n".join(queue_lines)
+    
+    def handle_input(self, key):
+        if not self.active or not self.current_planet:
+            return False
+        if key in '1234':
+            idx = int(key)-1
+            recipes = list(enhanced_manufacturing.recipes.keys())
+            if idx < len(recipes):
+                econ = enhanced_planet_economies.get(self.current_planet)
+                stock = econ.stockpiles if econ else {}
+                eff = ship_systems.get_crew_effectiveness('engineering')
+                if enhanced_manufacturing.start_manufacturing(self.current_planet, recipes[idx], stock, eff):
+                    self.update_display()
+                return True
+        return False
+
 # ===== PERSISTENT MILITARY & POLITICAL SYSTEMS =====
 
 class MilitaryShipType(Enum):
@@ -1840,6 +1952,8 @@ class MilitaryShip(Entity):
         self.last_patrol_change = 0
         self.engagement_range = 50
         self.hostile_factions = []
+        self.follow_player = False
+        self._follow_offset = Vec3(random.uniform(-10, 10), 0, random.uniform(-10, 10))
         
         # Set hostile factions based on relationships
         if faction_id in faction_system.factions:
@@ -1900,15 +2014,18 @@ class MilitaryShip(Entity):
             
     def escort_behavior(self):
         """Follow and protect cargo ships"""
-        # Find nearby friendly cargo ships to escort
+        # Follow player if requested as escort
+        if self.follow_player and scene_manager.current_state == GameState.SPACE and scene_manager.space_controller:
+            self.target_position = scene_manager.space_controller.position + self._follow_offset
+            return
+        # Otherwise, find nearby friendly cargo ships to escort
         for cargo_ship in unified_transport_system.cargo_ships:
             if hasattr(cargo_ship, 'position'):
                 distance = (self.position - cargo_ship.position).length()
-                if distance < 150:  # Within escort range
-                    # Follow cargo ship's current target (waypoint or destination) for tighter convoying
+                if distance < 150:
                     follow_pos = getattr(cargo_ship, 'current_target_pos', cargo_ship.position)
                     self.target_position = follow_pos + Vec3(8, 0, 8)
-                    break
+                    return
                     
     def check_for_hostiles(self):
         """Check for hostile ships and player"""
@@ -1954,6 +2071,9 @@ class MilitaryShip(Entity):
                             if hasattr(cs, 'take_damage'):
                                 dmg = random.randint(8, 20)
                                 cs.take_damage(dmg)
+                                # FX: laser beam and impact
+                                LaserFX.spawn_beam(self.position, cs.position, beam_color=color.red)
+                                LaserFX.spawn_impact(cs.position, fx_color=color.yellow)
                                 print(f"💥 {self.faction_id} hit hostile ship for {dmg} damage")
                                 break
                     except Exception:
@@ -2177,6 +2297,14 @@ class FactionMilitaryManager:
         # Update all military ships
         for ship in self.military_ships[:]:
             ship.update()
+            # Despawn temporary escorts when timer expires
+            try:
+                if hasattr(ship, '_despawn_time') and time.time() > ship._despawn_time:
+                    self.military_ships.remove(ship)
+                    destroy(ship)
+                    continue
+            except Exception:
+                pass
             
         # Check for blockade effectiveness
         self.update_blockades()
@@ -2284,6 +2412,7 @@ class MissionType(Enum):
     ASSASSINATION = "ASSASSINATION"
     RESCUE = "RESCUE"
     BLOCKADE_RUNNING = "BLOCKADE_RUNNING"
+    BOUNTY_HUNT = "BOUNTY_HUNT"
 
 class ContractStatus(Enum):
     AVAILABLE = "AVAILABLE"
@@ -2309,6 +2438,7 @@ class Contract:
     status: ContractStatus
     start_time: float
     completion_time: float = None
+    metadata: dict = None
     
 class DynamicContractSystem:
     """Generates contracts based on current galaxy state"""
@@ -2362,6 +2492,14 @@ class DynamicContractSystem:
                               if getattr(req, 'urgency', None) in (UrgencyLevel.CRITICAL, UrgencyLevel.URGENT)]
             if critical_needs and random.random() < 0.5:
                 self.generate_supply_contract(planet_name, critical_needs)
+
+        # Occasionally create a timed delivery mission
+        if random.random() < 0.25:
+            self.generate_timed_delivery_contract()
+
+        # Occasionally create a bounty based on recent pirate activity
+        if random.random() < 0.25:
+            self.generate_bounty_contract()
                 
     def generate_blockade_running_contract(self, planet_name):
         """Generate contract to break through blockade"""
@@ -2404,7 +2542,8 @@ class DynamicContractSystem:
                 'ship_components': ['SHIELDS', 'WEAPONS']
             },
             status=ContractStatus.AVAILABLE,
-            start_time=time.time()
+            start_time=time.time(),
+            metadata={'dest': planet_name}
         )
         
         self.available_contracts.append(contract)
@@ -2443,11 +2582,51 @@ class DynamicContractSystem:
                 'ship_components': ['WEAPONS', 'SHIELDS']
             },
             status=ContractStatus.AVAILABLE,
-            start_time=time.time()
+            start_time=time.time(),
+            metadata={'dest': cargo_ship.destination_planet}
         )
         
         self.available_contracts.append(contract)
         print(f"📋 New escort contract: {contract.title}")
+
+    def generate_timed_delivery_contract(self):
+        """Create a timed delivery referencing an existing high-priority need."""
+        candidates = [p for p in planets if hasattr(p, 'enhanced_economy') and p.enhanced_economy]
+        if not candidates:
+            return
+        dest = random.choice(candidates)
+        needs = dest.enhanced_economy.calculate_needs()
+        if not needs:
+            return
+        commodity, req = random.choice(list(needs.items()))
+        qty = max(20, min(120, getattr(req, 'quantity', 60)))
+        suppliers = dest.enhanced_economy.find_suppliers(commodity)
+        if not suppliers:
+            return
+        origin = random.choice(suppliers)
+        time_limit = 900  # 15 minutes
+        reward = qty * 60
+        contract = Contract(
+            contract_id=f"timed_{dest.name}_{commodity}_{int(time.time())}",
+            mission_type=MissionType.CARGO_DELIVERY,
+            client_faction=getattr(dest, 'faction_id', 'merchant_guild') or 'merchant_guild',
+            title=f"Timed Delivery: {commodity} to {dest.name}",
+            description=f"Deliver {qty} {commodity} from {origin.name} to {dest.name} within {int(time_limit/60)} minutes.",
+            objectives=[
+                f"Load {qty} {commodity} at {origin.name}",
+                f"Deliver to {dest.name} before the deadline"
+            ],
+            rewards={'credits': reward},
+            penalties={'reputation': {'merchant_guild': -10}},
+            time_limit=time_limit,
+            difficulty=2,
+            requirements={'cargo_capacity': qty},
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time(),
+            metadata={'timed': True, 'commodity': commodity, 'quantity': qty, 'origin': origin.name, 'dest': dest.name}
+        )
+        self.available_contracts.append(contract)
+        print(f"📋 New timed delivery: {contract.title}")
         
     def generate_exploration_contract(self):
         """Generate exploration contract for unknown regions"""
@@ -2533,6 +2712,54 @@ class DynamicContractSystem:
         
         self.available_contracts.append(contract)
         print(f"📋 New diplomatic contract: {contract.title}")
+
+    def generate_bounty_contract(self):
+        """Generate a bounty mission targeting pirate bases or raiders near hotspots."""
+        # Identify hotspot: planets with recent_attacks or nearby raiders
+        hotspot = None
+        candidates = []
+        for planet in planets:
+            econ = getattr(planet, 'enhanced_economy', None)
+            if econ and getattr(econ, 'recent_attacks', 0) > 0:
+                candidates.append((planet, econ.recent_attacks))
+        if candidates:
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            hotspot = candidates[0][0]
+        else:
+            # Fallback to any planet with nearby raiders
+            for planet in planets:
+                for raider in unified_transport_system.raiders:
+                    try:
+                        if (raider.position - planet.position).length() < 200:
+                            hotspot = planet
+                            break
+                    except Exception:
+                        pass
+                if hotspot:
+                    break
+        if not hotspot:
+            return
+        reward = 20000
+        contract = Contract(
+            contract_id=f"bounty_{hotspot.name}_{int(time.time())}",
+            mission_type=MissionType.BOUNTY_HUNT,
+            client_faction='merchant_guild',
+            title=f"Bounty: Clear Pirates near {hotspot.name}",
+            description=f"Eliminate 1 pirate raider operating near {hotspot.name}.",
+            objectives=[
+                f"Destroy 1 pirate raider near {hotspot.name}"
+            ],
+            rewards={'credits': reward, 'reputation': {'merchant_guild': 8}},
+            penalties={'reputation': {'merchant_guild': -5}},
+            time_limit=3600,
+            difficulty=3,
+            requirements={'ship_components': ['WEAPONS', 'SHIELDS']},
+            status=ContractStatus.AVAILABLE,
+            start_time=time.time(),
+            metadata={'target_planet': hotspot.name, 'kills_required': 1, 'kills': 0}
+        )
+        self.available_contracts.append(contract)
+        print(f"📋 New bounty contract: {contract.title}")
         
     def generate_supply_contract(self, planet_name, critical_commodities):
         """Generate urgent supply delivery contract"""
@@ -2575,7 +2802,8 @@ class DynamicContractSystem:
                 'cargo_capacity': quantity
             },
             status=ContractStatus.AVAILABLE,
-            start_time=time.time()
+            start_time=time.time(),
+            metadata={'dest': planet_name, 'commodity': commodity, 'quantity': quantity}
         )
         
         self.available_contracts.append(contract)
@@ -2596,6 +2824,13 @@ class DynamicContractSystem:
                 self.check_exploration_progress(contract)
             elif contract.mission_type == MissionType.BLOCKADE_RUNNING:
                 self.check_blockade_running_progress(contract)
+            elif contract.mission_type == MissionType.CARGO_DELIVERY and contract.metadata and contract.metadata.get('timed'):
+                # Timed delivery completion: verify player delivered required commodity to destination
+                dest_name = contract.metadata.get('dest')
+                commodity = contract.metadata.get('commodity')
+                qty = int(contract.metadata.get('quantity', 0))
+                # If in town at destination and stockpiles increased or player sold required goods, mark complete via hook in TradingUI
+                pass
                 
     def check_exploration_progress(self, contract):
         """Check if player has reached exploration target"""
@@ -2635,6 +2870,8 @@ class DynamicContractSystem:
         self.available_contracts.remove(contract)
         contract.status = ContractStatus.ACCEPTED
         self.active_contracts.append(contract)
+        # Reset start time on accept for fair deadlines
+        contract.start_time = time.time()
         
         print(f"✅ Accepted contract: {contract.title}")
         return True
@@ -3255,12 +3492,20 @@ class NPC(Entity):
     
     def update(self):
         if not paused and scene_manager.current_state == GameState.TOWN:
+            # LOD: skip updates when far from player in town
+            try:
+                if scene_manager.town_controller:
+                    d = (self.position - scene_manager.town_controller.position).length()
+                    if d > SETTINGS.get('town_prop_hide_distance', 70.0):
+                        return
+            except Exception:
+                pass
             # Purposeful wandering with bias toward role-specific building
             self.move_timer += time.dt
             if self.move_timer > random.uniform(2, 5):
                 self.move_timer = 0
                 self.move_direction = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
-
+            
             target = None
             if self.npc_type == "trader":
                 target = getattr(scene_manager, 'trading_post_entity', None)
@@ -3491,6 +3736,38 @@ class SpaceController(Entity):
             scale=0.6,
             color=color.cyan
         )
+        # Compact HUD line for top active contract
+        self.active_contract_text = Text(
+            parent=camera.ui,
+            text='',
+            position=(-0.45, -0.15),
+            scale=0.6,
+            color=color.azure,
+            enabled=True
+        )
+        # Escort status HUD
+        self.escort_text = Text(
+            parent=camera.ui,
+            text='',
+            position=(-0.45, -0.2),
+            scale=0.6,
+            color=color.green,
+            enabled=False
+        )
+        # Course HUD
+        self.course_text = Text(
+            parent=camera.ui,
+            text='',
+            position=(0.2, -0.1),
+            scale=0.6,
+            color=color.cyan,
+            enabled=False
+        )
+        self.course_target = None
+        self.autopilot = False
+        self._course_beacons = []
+        self.course_route = []  # list of planet names
+        self.course_route_index = 0
 
     def update(self):
         if not paused:
@@ -3569,10 +3846,19 @@ class SpaceController(Entity):
                 # No fuel or engine destroyed
                 self.speed = 0
                 self.max_speed = 0
+                # One-time warning to avoid spam
+                if not hasattr(ship_systems, '_no_fuel_warned'):
+                    ship_systems._no_fuel_warned = False
+                if ship_systems.fuel_system.current_fuel <= 0 and not ship_systems._no_fuel_warned:
+                    print("⛽ Out of fuel! Engines offline. Refuel at a station or request rescue (death will also rescue with a fee).")
+                    ship_systems._no_fuel_warned = True
             else:
                 base_speed = 5
                 self.speed = base_speed * engine_performance
                 self.max_speed = int(ship_systems.get_max_speed())
+                # Reset warning when refueled
+                if hasattr(ship_systems, '_no_fuel_warned') and ship_systems._no_fuel_warned and ship_systems.fuel_system.current_fuel > 0:
+                    ship_systems._no_fuel_warned = False
                 
             # Update cargo capacity
             player_cargo.max_capacity = ship_systems.get_cargo_capacity()
@@ -3621,6 +3907,120 @@ class SpaceController(Entity):
             available_contracts = len(dynamic_contracts.available_contracts)
             active_contracts = len(dynamic_contracts.active_contracts)
             self.contracts_text.text = f"📋 Contracts: {available_contracts} available | {active_contracts} active"
+
+            # Show compact info on first active contract (countdown / progress)
+            try:
+                if dynamic_contracts.active_contracts:
+                    c = dynamic_contracts.active_contracts[0]
+                    remaining = max(0, int(c.time_limit - (time.time() - c.start_time)))
+                    mm, ss = remaining // 60, remaining % 60
+                    line = f"📋 {c.title} [{mm:02d}:{ss:02d}]"
+                    if c.mission_type == MissionType.CARGO_DELIVERY and c.metadata and c.metadata.get('timed'):
+                        need = int(c.metadata.get('quantity', 0))
+                        have = int(c.metadata.get('delivered', 0))
+                        line += f"  {have}/{need}"
+                    if c.mission_type == MissionType.BOUNTY_HUNT and c.metadata:
+                        need = int(c.metadata.get('kills_required', 1))
+                        have = int(c.metadata.get('kills', 0))
+                        line += f"  {have}/{need}"
+                    self.active_contract_text.text = line
+                    self.active_contract_text.enabled = True
+                else:
+                    self.active_contract_text.text = ''
+                    self.active_contract_text.enabled = False
+            except Exception:
+                pass
+            # Update course HUD
+            try:
+                if self.course_route and scene_manager.current_state == GameState.SPACE:
+                    # Determine current waypoint
+                    current_wp_name = self.course_route[min(self.course_route_index, len(self.course_route)-1)]
+                    target = next((p for p in planets if getattr(p, 'name', None) == current_wp_name), None)
+                    if target is not None:
+                        d = (target.position - self.position).length()
+                        final_dest = self.course_route[-1]
+                        self.course_text.text = f"🧭 Course: {final_dest} via {current_wp_name} ({int(d)}u)"
+                        self.course_text.enabled = True
+                        # Simple autopilot: orient toward target and apply forward thrust
+                        if self.autopilot:
+                            try:
+                                self.look_at(target.position)
+                            except Exception:
+                                pass
+                            # Apply gentle forward motion if engines available
+                            if self.max_speed > 0:
+                                forward_step = min(self.max_speed, 20) * 0.5
+                                self.position += self.forward * forward_step * time.dt
+                            # Arrived threshold: stop autopilot
+                            if d < max(50.0, getattr(target, 'landing_radius', 30) + 20):
+                                # Advance to next waypoint or finish
+                                if self.course_route_index < len(self.course_route) - 1:
+                                    self.course_route_index += 1
+                                    print(f"🧭 Reached waypoint {current_wp_name}. Next: {self.course_route[self.course_route_index]}")
+                                    self._clear_course_beacons()
+                                else:
+                                    print(f"🧭 Arrived near {final_dest}. Autopilot disengaged.")
+                                    self.autopilot = False
+                                    self.course_route.clear()
+                                    self.course_route_index = 0
+                                    self._clear_course_beacons()
+                        # Maintain guidance beacons
+                        self._ensure_course_beacons(target.position)
+                    else:
+                        self.course_text.text = ''
+                        self.course_text.enabled = False
+                        self._clear_course_beacons()
+                else:
+                    self.course_text.text = ''
+                    self.course_text.enabled = False
+                    self._clear_course_beacons()
+            except Exception:
+                pass
+
+    def _ensure_course_beacons(self, target_pos: 'Vec3'):
+        try:
+            # Spawn simple beacons along straight path if none exist or target changed
+            if not self._course_beacons:
+                segments = 6
+                for i in range(1, segments):
+                    t = i / segments
+                    pos = self.position + (target_pos - self.position) * t
+                    beacon = Entity(model='sphere', color=color.cyan.tint(0.2), scale=1.2, position=pos)
+                    self._course_beacons.append(beacon)
+            else:
+                # Periodically refresh positions to the current path
+                if not hasattr(self, '_next_beacon_refresh'):
+                    self._next_beacon_refresh = time.time()
+                if time.time() > self._next_beacon_refresh:
+                    segments = len(self._course_beacons) + 1
+                    for i, b in enumerate(self._course_beacons, start=1):
+                        t = i / segments
+                        b.position = self.position + (target_pos - self.position) * t
+                    self._next_beacon_refresh = time.time() + 1.0
+        except Exception:
+            pass
+
+    def _clear_course_beacons(self):
+        try:
+            for b in self._course_beacons:
+                destroy(b)
+            self._course_beacons.clear()
+        except Exception:
+            self._course_beacons = []
+            # Update escort HUD
+            try:
+                escorts = [s for s in military_manager.military_ships if getattr(s, 'follow_player', False)]
+                if escorts:
+                    soonest = min([getattr(s, '_despawn_time', time.time()) for s in escorts])
+                    remaining = max(0, int(soonest - time.time()))
+                    mm, ss = remaining // 60, remaining % 60
+                    self.escort_text.text = f"🛰️ Escorts: {len(escorts)} [{mm:02d}:{ss:02d}]"
+                    self.escort_text.enabled = True
+                else:
+                    self.escort_text.text = ''
+                    self.escort_text.enabled = False
+            except Exception:
+                pass
 
 # Player setup with proper 3D movement
 player = SpaceController()
@@ -3981,6 +4381,13 @@ class SceneManager:
             Entity(parent=trading_post, light=PointLight, y=4, color=faction_col)
             Entity(parent=shipyard, light=PointLight, y=4, color=color.orange)
             Entity(parent=embassy, light=PointLight, y=4, color=faction_col)
+
+            # Mark town props for LOD toggling
+            for ent in self.town_entities:
+                try:
+                    ent._is_town_prop = True
+                except Exception:
+                    pass
             
             # Add some NPCs with proper NPC class
             self.town_npcs = []
@@ -4029,12 +4436,25 @@ class SceneManager:
             self.town_controller.enable()
             
             self.current_state = GameState.TOWN
+            # Autosave on landing/entering town
+            try:
+                save_game()
+            except Exception:
+                pass
     
     def switch_to_space(self):
         # Close any open UIs when switching scenes
         if 'ui_manager' in globals():
             ui_manager.hide_all()
         if self.current_state == GameState.TOWN:
+            # Prevent takeoff if hull is in critical condition
+            try:
+                hull = ship_systems.components.get(ComponentType.HULL)
+                if hull and hull.condition == ComponentCondition.CRITICAL:
+                    print("🚫 Takeoff denied: Hull integrity critical. Repair at shipyard first.")
+                    return
+            except Exception:
+                pass
             # Store and reset town controller state
             self.town_controller.disable()
             
@@ -4065,6 +4485,11 @@ class SceneManager:
             self.current_planet = None
             
             self.current_state = GameState.SPACE
+            # Autosave on takeoff/entering space
+            try:
+                save_game()
+            except Exception:
+                pass
 
 # Create scene manager
 scene_manager = SceneManager()
@@ -4073,12 +4498,187 @@ def save_game():
     if not os.path.exists('saves'):
         os.makedirs('saves')
     
+    def vec3_to_list(v):
+        try:
+            return [float(v.x), float(v.y), float(v.z)]
+        except Exception:
+            return [0.0, 0.0, 0.0]
+    
+    GAME_VERSION = '0.9.0'
     game_state = {
+        'version': GAME_VERSION,
         'current_scene': scene_manager.current_state,
         'player_position': (player.position.x, player.position.y, player.position.z),
         'player_rotation': (player.rotation.x, player.rotation.y, player.rotation.z),
-        'planets': [(p.position.x, p.position.y, p.position.z, p.scale) for p in planets]
+        'planets': [(p.position.x, p.position.y, p.position.z, p.scale) for p in planets],
+        # New detailed planet snapshot
+        'planets_v2': [
+            {
+                'name': getattr(p, 'name', None),
+                'type': getattr(p, 'planet_type', None),
+                'faction_id': getattr(p, 'faction_id', None),
+                'position': (p.position.x, p.position.y, p.position.z),
+                'scale': getattr(p, 'scale', 1),
+                'has_fuel_station': getattr(p, 'has_fuel_station', False),
+                'fuel_price': getattr(p, 'fuel_price', 5),
+                'economy': (
+                    {
+                        'stockpiles': getattr(p.enhanced_economy, 'stockpiles', {}),
+                        'daily_consumption': getattr(p.enhanced_economy, 'daily_consumption', {}),
+                        'daily_production': getattr(p.enhanced_economy, 'daily_production', {}),
+                        'credits': getattr(p.enhanced_economy, 'credits', 0),
+                        'recent_attacks': getattr(p.enhanced_economy, 'recent_attacks', 0),
+                    }
+                    if hasattr(p, 'enhanced_economy') and p.enhanced_economy else None
+                )
+            }
+            for p in planets
+        ],
+        'contracts': [
+            {
+                'id': cid,
+                'origin': getattr(data['origin'], 'name', None),
+                'dest': getattr(data['dest'], 'name', None),
+                'commodity': data['commodity'],
+                'quantity': data['quantity'],
+                'unit_price': data['unit_price'],
+                'total_cost': data['total_cost'],
+                'status': data['status']
+            }
+            for cid, data in getattr(contract_registry, '_contracts', {}).items()
+        ],
+        'ships': {
+            'cargo': [
+                {
+                    'origin': getattr(cs.origin, 'name', None),
+                    'dest': getattr(cs.destination, 'name', None),
+                    'position': vec3_to_list(cs.position),
+                    'waypoints': [vec3_to_list(wp) for wp in getattr(cs, 'waypoints', [])],
+                    'speed': getattr(cs, 'speed', 8.0),
+                    'health': getattr(cs, 'health', 100),
+                    'contract_id': getattr(cs, 'contract_id', None),
+                    'cargo': cs.cargo
+                }
+                for cs in getattr(unified_transport_system, 'cargo_ships', [])
+                if hasattr(cs, 'origin') and hasattr(cs, 'destination')
+            ],
+            'message': [
+                {
+                    'origin': getattr(ms.origin, 'name', None),
+                    'dest': getattr(ms.destination, 'name', None),
+                    'position': vec3_to_list(ms.position),
+                    'waypoints': [vec3_to_list(wp) for wp in getattr(ms, 'waypoints', [])],
+                    'speed': getattr(ms, 'speed', 12.0),
+                    'health': getattr(ms, 'health', 100),
+                    'message_type': getattr(ms, 'message_type', None)
+                }
+                for ms in getattr(unified_transport_system, 'message_ships', [])
+                if hasattr(ms, 'origin') and hasattr(ms, 'destination')
+            ],
+            'payment': [
+                {
+                    'origin': getattr(ps.origin, 'name', None),
+                    'dest': getattr(ps.destination, 'name', None),
+                    'position': vec3_to_list(ps.position),
+                    'waypoints': [vec3_to_list(wp) for wp in getattr(ps, 'waypoints', [])],
+                    'speed': getattr(ps, 'speed', 12.0),
+                    'health': getattr(ps, 'health', 100),
+                    'credits': getattr(ps, 'credits', 0),
+                    'contract_id': getattr(ps, 'contract_id', None)
+                }
+                for ps in getattr(unified_transport_system, 'payment_ships', [])
+                if hasattr(ps, 'origin') and hasattr(ps, 'destination')
+            ]
+        }
     }
+
+    # Persist player wallet and ship core state
+    try:
+        game_state['player_wallet'] = {'credits': player_wallet.credits}
+        # Ship components snapshot
+        comps = {}
+        for ct, comp in ship_systems.components.items():
+            comps[ct.value] = {
+                'level': comp.level,
+                'condition': comp.condition.value,
+                'max_integrity': comp.max_integrity,
+                'current_integrity': comp.current_integrity,
+                'efficiency': comp.efficiency,
+            }
+        game_state['ship'] = {
+            'fuel': {
+                'max': ship_systems.fuel_system.max_fuel,
+                'current': ship_systems.fuel_system.current_fuel,
+            },
+            'components': comps,
+            'spare_parts': ship_systems.spare_parts,
+            'navigation': {
+                'course_route': getattr(player, 'course_route', []),
+                'course_index': getattr(player, 'course_route_index', 0),
+                'autopilot': getattr(player, 'autopilot', False)
+            }
+        }
+        # Persist faction heat
+        try:
+            game_state['faction_heat'] = faction_system.player_heat
+        except Exception:
+            pass
+        # Persist contract registry states (including insurance and knowledge flags)
+        try:
+            game_state['transport_contracts'] = [
+                {
+                    'id': cid,
+                    'origin': getattr(data.get('origin', None), 'name', None),
+                    'dest': getattr(data.get('dest', None), 'name', None),
+                    'commodity': data.get('commodity'),
+                    'quantity': data.get('quantity'),
+                    'unit_price': data.get('unit_price'),
+                    'total_cost': data.get('total_cost'),
+                    'status': data.get('status'),
+                    'insured': data.get('insured', True),
+                    'insurance_premium': data.get('insurance_premium', 0),
+                    'insurance_payout': data.get('insurance_payout', 0),
+                    'insurance_claimed': data.get('insurance_claimed', False),
+                    'expected_arrival': data.get('expected_arrival'),
+                    'arrival_grace': data.get('arrival_grace', 180.0),
+                    'known_to_origin': data.get('known_to_origin', False),
+                    'known_to_dest': data.get('known_to_dest', False),
+                    'inquiry_sent': data.get('inquiry_sent', False),
+                }
+                for cid, data in getattr(contract_registry, '_contracts', {}).items()
+            ]
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Serialize dynamic contracts (available + active)
+    try:
+        def serialize_contract(c: Contract):
+            return {
+                'contract_id': c.contract_id,
+                'mission_type': c.mission_type.value,
+                'client_faction': c.client_faction,
+                'title': c.title,
+                'description': c.description,
+                'objectives': c.objectives,
+                'rewards': c.rewards,
+                'penalties': c.penalties,
+                'time_limit': c.time_limit,
+                'difficulty': c.difficulty,
+                'requirements': c.requirements,
+                'status': c.status.value,
+                'start_time': c.start_time,
+                'completion_time': c.completion_time,
+                'metadata': c.metadata,
+            }
+        game_state['dynamic_contracts'] = {
+            'available': [serialize_contract(c) for c in dynamic_contracts.available_contracts],
+            'active': [serialize_contract(c) for c in dynamic_contracts.active_contracts],
+            'completed': [serialize_contract(c) for c in dynamic_contracts.completed_contracts[-20:]],
+        }
+    except Exception:
+        pass
     
     if scene_manager.current_state == GameState.TOWN:
         game_state['town_player_position'] = (
@@ -4087,9 +4687,25 @@ def save_game():
             scene_manager.town_controller.position.z
         )
     
+    # Rolling autosave slots (autosave_1..3)
+    try:
+        # Shift existing autosaves
+        for i in range(3, 1, -1):
+            older = f'saves/autosave_{i-1}.json'
+            newer = f'saves/autosave_{i}.json'
+            if os.path.exists(older):
+                try:
+                    os.replace(older, newer)
+                except Exception:
+                    pass
+        # Write newest autosave_1
+        with open('saves/autosave_1.json', 'w') as f:
+            json.dump(game_state, f)
+        print('Game autosaved (slot 1).')
+    except Exception:
+        # Fallback timestamped save
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f'saves/save_{timestamp}.json'
-    
     with open(filename, 'w') as f:
         json.dump(game_state, f)
     print(f'Game saved to {filename}')
@@ -4108,6 +4724,12 @@ def load_game():
     latest_save = max(save_files)
     with open(f'saves/{latest_save}', 'r') as f:
         game_state = json.load(f)
+    try:
+        version = game_state.get('version', 'unknown')
+        if version != '0.9.0':
+            print(f"ℹ️ Loading save version {version}. Current game version 0.9.0. Attempting compatibility load...")
+    except Exception:
+        pass
     
     # Switch to correct scene
     if game_state['current_scene'] == GameState.TOWN:
@@ -4124,12 +4746,229 @@ def load_game():
         destroy(p)
     planets.clear()
     
-    for p_data in game_state['planets']:
+    if 'planets_v2' in game_state and game_state['planets_v2']:
+        for entry in game_state['planets_v2']:
+            pos = entry.get('position', (0, 0, 0))
+            planet = Planet(position=Vec3(pos[0], pos[1], pos[2]))
+            if entry.get('scale') is not None:
+                planet.scale = entry['scale']
+            if entry.get('name'):
+                planet.name = entry['name']
+            if entry.get('type'):
+                planet.planet_type = entry['type']
+            if entry.get('faction_id'):
+                planet.faction_id = entry['faction_id']
+            planet.has_fuel_station = entry.get('has_fuel_station', False)
+            planet.fuel_price = entry.get('fuel_price', 5)
+            planets.append(planet)
+        # Rebuild enhanced economies and apply snapshots
+        initialize_enhanced_economies()
+        name_to_planet = {getattr(p, 'name', None): p for p in planets}
+        for entry in game_state['planets_v2']:
+            pname = entry.get('name')
+            econ_data = entry.get('economy')
+            if pname in name_to_planet and econ_data:
+                p = name_to_planet[pname]
+                if hasattr(p, 'enhanced_economy') and p.enhanced_economy:
+                    p.enhanced_economy.stockpiles = econ_data.get('stockpiles', {}).copy()
+                    p.enhanced_economy.daily_consumption = econ_data.get('daily_consumption', {}).copy()
+                    p.enhanced_economy.daily_production = econ_data.get('daily_production', {}).copy()
+                    p.enhanced_economy.credits = econ_data.get('credits', p.enhanced_economy.credits)
+                    p.enhanced_economy.recent_attacks = econ_data.get('recent_attacks', 0)
+        # Update global mapping
+        globals()['enhanced_planet_economies'] = {p.name: p.enhanced_economy for p in planets if hasattr(p, 'enhanced_economy') and p.enhanced_economy}
+    else:
+        # Backward compatibility
+        for p_data in game_state.get('planets', []):
         planet = Planet(position=Vec3(p_data[0], p_data[1], p_data[2]))
         planet.scale = p_data[3]
         planets.append(planet)
     
+    # Restore contract registry (best-effort)
+    try:
+        contract_registry._contracts.clear()
+        for entry in game_state.get('contracts', []):
+            # Map names back to planet objects
+            origin = next((p for p in planets if getattr(p, 'name', None) == entry.get('origin')), None)
+            dest = next((p for p in planets if getattr(p, 'name', None) == entry.get('dest')), None)
+            cid = entry.get('id') or contract_registry._next_id()
+            contract_registry._contracts[cid] = {
+                'origin': origin,
+                'dest': dest,
+                'commodity': entry.get('commodity'),
+                'quantity': entry.get('quantity', 0),
+                'unit_price': entry.get('unit_price', 0),
+                'total_cost': entry.get('total_cost', 0),
+                'status': entry.get('status', 'unknown')
+            }
+        # Load enhanced contract details if present
+        for entry in game_state.get('transport_contracts', []):
+            origin = next((p for p in planets if getattr(p, 'name', None) == entry.get('origin')), None)
+            dest = next((p for p in planets if getattr(p, 'name', None) == entry.get('dest')), None)
+            cid = entry.get('id') or contract_registry._next_id()
+            contract_registry._contracts[cid] = {
+                'origin': origin,
+                'dest': dest,
+                'commodity': entry.get('commodity'),
+                'quantity': entry.get('quantity', 0),
+                'unit_price': entry.get('unit_price', 0),
+                'total_cost': entry.get('total_cost', 0),
+                'status': entry.get('status', 'unknown'),
+                'insured': entry.get('insured', True),
+                'insurance_premium': entry.get('insurance_premium', 0),
+                'insurance_payout': entry.get('insurance_payout', 0),
+                'insurance_claimed': entry.get('insurance_claimed', False),
+                'expected_arrival': entry.get('expected_arrival'),
+                'arrival_grace': entry.get('arrival_grace', 180.0),
+                'known_to_origin': entry.get('known_to_origin', False),
+                'known_to_dest': entry.get('known_to_dest', False),
+                'inquiry_sent': entry.get('inquiry_sent', False),
+            }
+    except Exception:
+        pass
+    # Restore faction heat
+    try:
+        if 'faction_heat' in game_state:
+            faction_system.player_heat.update(game_state['faction_heat'])
+    except Exception:
+        pass
+
+    # Restore in-flight ships (best-effort)
+    try:
+        # Clear any existing ships
+        unified_transport_system.message_ships.clear()
+        unified_transport_system.cargo_ships.clear()
+        unified_transport_system.payment_ships.clear()
+
+        def list_to_vec3(lst):
+            try:
+                return Vec3(float(lst[0]), float(lst[1]), float(lst[2]))
+            except Exception:
+                return Vec3(0, 0, 0)
+
+        ships = game_state.get('ships', {})
+        # Cargo
+        for entry in ships.get('cargo', []):
+            origin = next((p for p in planets if getattr(p, 'name', None) == entry.get('origin')), None)
+            dest = next((p for p in planets if getattr(p, 'name', None) == entry.get('dest')), None)
+            if not origin or not dest:
+                continue
+            cs = CargoShip(origin, dest, entry.get('cargo', {}))
+            cs.position = list_to_vec3(entry.get('position', [0, 0, 0]))
+            cs.waypoints = [list_to_vec3(v) for v in entry.get('waypoints', [])]
+            cs.speed = entry.get('speed', cs.speed)
+            cs.health = entry.get('health', cs.health)
+            cs.contract_id = entry.get('contract_id', None)
+            unified_transport_system.cargo_ships.append(cs)
+
+        # Message
+        for entry in ships.get('message', []):
+            origin = next((p for p in planets if getattr(p, 'name', None) == entry.get('origin')), None)
+            dest = next((p for p in planets if getattr(p, 'name', None) == entry.get('dest')), None)
+            if not origin or not dest:
+                continue
+            ms = MessageShip(origin, dest, entry.get('message_type', None), payload=None)
+            ms.position = list_to_vec3(entry.get('position', [0, 0, 0]))
+            ms.waypoints = [list_to_vec3(v) for v in entry.get('waypoints', [])]
+            ms.speed = entry.get('speed', ms.speed)
+            ms.health = entry.get('health', ms.health)
+            unified_transport_system.message_ships.append(ms)
+
+        # Payment
+        for entry in ships.get('payment', []):
+            origin = next((p for p in planets if getattr(p, 'name', None) == entry.get('origin')), None)
+            dest = next((p for p in planets if getattr(p, 'name', None) == entry.get('dest')), None)
+            if not origin or not dest:
+                continue
+            ps = PaymentShip(origin, dest, entry.get('credits', 0))
+            ps.position = list_to_vec3(entry.get('position', [0, 0, 0]))
+            ps.waypoints = [list_to_vec3(v) for v in entry.get('waypoints', [])]
+            ps.speed = entry.get('speed', ps.speed)
+            ps.health = entry.get('health', ps.health)
+            ps.contract_id = entry.get('contract_id', None)
+            unified_transport_system.payment_ships.append(ps)
+    except Exception:
+        pass
+    
     print(f'Game loaded from {latest_save}')
+
+    # Restore dynamic contracts
+    try:
+        dc = game_state.get('dynamic_contracts')
+        if dc:
+            dynamic_contracts.available_contracts.clear()
+            dynamic_contracts.active_contracts.clear()
+            dynamic_contracts.completed_contracts.clear()
+            def deserialize_contract(obj):
+                try:
+                    return Contract(
+                        contract_id=obj.get('contract_id'),
+                        mission_type=MissionType(obj.get('mission_type', 'CARGO_DELIVERY')),
+                        client_faction=obj.get('client_faction', 'independent'),
+                        title=obj.get('title', ''),
+                        description=obj.get('description', ''),
+                        objectives=obj.get('objectives', []),
+                        rewards=obj.get('rewards', {}),
+                        penalties=obj.get('penalties', {}),
+                        time_limit=obj.get('time_limit', 1800),
+                        difficulty=obj.get('difficulty', 1),
+                        requirements=obj.get('requirements', {}),
+                        status=ContractStatus(obj.get('status', 'AVAILABLE')),
+                        start_time=obj.get('start_time', time.time()),
+                        completion_time=obj.get('completion_time'),
+                        metadata=obj.get('metadata')
+                    )
+                except Exception:
+                    return None
+            for o in dc.get('available', []):
+                c = deserialize_contract(o)
+                if c:
+                    dynamic_contracts.available_contracts.append(c)
+            for o in dc.get('active', []):
+                c = deserialize_contract(o)
+                if c:
+                    dynamic_contracts.active_contracts.append(c)
+            for o in dc.get('completed', []):
+                c = deserialize_contract(o)
+                if c:
+                    dynamic_contracts.completed_contracts.append(c)
+    except Exception:
+        pass
+
+    # Restore player wallet and ship state
+    try:
+        if 'player_wallet' in game_state:
+            player_wallet.credits = int(game_state['player_wallet'].get('credits', player_wallet.credits))
+        if 'ship' in game_state:
+            ship = game_state['ship']
+            if 'fuel' in ship:
+                ship_systems.fuel_system.max_fuel = float(ship['fuel'].get('max', ship_systems.fuel_system.max_fuel))
+                ship_systems.fuel_system.current_fuel = float(ship['fuel'].get('current', ship_systems.fuel_system.current_fuel))
+            if 'components' in ship:
+                for name, data in ship['components'].items():
+                    try:
+                        ct = ComponentType(name)
+                        comp = ship_systems.components.get(ct)
+                        if comp:
+                            comp.level = int(data.get('level', comp.level))
+                            comp.max_integrity = int(data.get('max_integrity', comp.max_integrity))
+                            comp.current_integrity = int(data.get('current_integrity', comp.current_integrity))
+                            comp.condition = ComponentCondition(data.get('condition', comp.condition.value))
+                            comp.efficiency = float(data.get('efficiency', comp.efficiency))
+                    except Exception:
+                        pass
+            if 'spare_parts' in ship:
+                ship_systems.spare_parts.update(ship['spare_parts'])
+            if 'navigation' in ship:
+                nav = ship['navigation']
+                try:
+                    player.course_route = nav.get('course_route', [])
+                    player.course_route_index = nav.get('course_index', 0)
+                    player.autopilot = nav.get('autopilot', False)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 def quit_game():
     application.quit()
@@ -4251,6 +5090,47 @@ landing_hide_threshold = 40.0
 
 # ===== TRANSPORT SHIP CLASSES =====
 
+class LaserFX:
+    """Lightweight visual effects for combat (beams and impact flashes)."""
+    @staticmethod
+    def spawn_beam(start_pos, end_pos, beam_color=color.azure, duration=0.15):
+        try:
+            mid = (start_pos + end_pos) / 2
+            length = (end_pos - start_pos).length()
+            if length <= 0:
+                return
+            # Use a thin quad aligned along the vector
+            beam = Entity(model='cube', color=beam_color, position=mid, scale=(0.1, 0.1, max(0.2, length)))
+            # Orient the beam roughly toward target (approx; Ursina simple)
+            dir_vec = (end_pos - start_pos).normalized()
+            beam.look_at(end_pos)
+            destroy(beam, delay=duration)
+            SoundFX.play('laser')
+        except Exception:
+            pass
+
+    @staticmethod
+    def spawn_impact(position, fx_color=color.yellow, duration=0.25):
+        try:
+            flash = Entity(model='sphere', color=fx_color, position=position, scale=0.7)
+            destroy(flash, delay=duration)
+            SoundFX.play('impact')
+        except Exception:
+            pass
+
+class SoundFX:
+    """Minimal sound facade; uses Ursina Audio if available, otherwise no-op."""
+    @staticmethod
+    def play(name: str):
+        try:
+            # Attempt to play if Audio is available and asset exists
+            if 'Audio' in globals():
+                # This assumes a corresponding asset is available; otherwise it will no-op
+                Audio(name, auto_destroy=True)
+        except Exception:
+            # No-op if audio unavailable
+            pass
+
 class TransportShip(Entity):
     """Base class for all transport ships"""
     
@@ -4307,7 +5187,7 @@ class TransportShip(Entity):
             # Expose target for escorts/AI consumers
             self.current_target_pos = target_pos
             self.position += direction * speed * time.dt
-
+            
             # Check if arrived at final destination
             if (self.position - self.destination.position).length() < 5:
                 self.on_arrival()
@@ -4321,7 +5201,7 @@ class TransportShip(Entity):
                 d_player = (self.position - scene_manager.space_controller.position).length()
                 # If very far, disable children for performance
                 for child in self.children:
-                    child.enabled = d_player < 400
+                    child.enabled = d_player < SETTINGS.get('ship_child_hide_distance', 900.0)
         except Exception:
             pass
 
@@ -4374,12 +5254,12 @@ class TransportShip(Entity):
         if hasattr(scene_manager, 'space_controller') and scene_manager.space_controller:
             # Guard against empty/destroyed nodepaths
             try:
-                player_pos = scene_manager.space_controller.position
+            player_pos = scene_manager.space_controller.position
                 _ = self.position  # access to ensure node exists
             except Exception:
                 return
             try:
-                distance = (self.position - player_pos).length()
+            distance = (self.position - player_pos).length()
             except Exception:
                 return
             if distance < 30 and not self.encounter_triggered:
@@ -4399,6 +5279,14 @@ class TransportShip(Entity):
             encounter_text += f"Value: {self.contract_value} credits\n"
             
         print(encounter_text)
+        # Offer boarding options via console prompt
+        try:
+            print("Press L to attempt boarding (1 Breach, 2 Stealth, 3 Surrender) or ignore.")
+            self._boarding_window_open = True
+            self._boarding_window_until = time.time() + 8
+            self._boarding_target = self
+        except Exception:
+            pass
         
     def on_arrival(self):
         """Override in subclasses"""
@@ -4418,6 +5306,21 @@ class TransportShip(Entity):
         try:
             if isinstance(self, CargoShip) and hasattr(self, 'contract_id'):
                 contract_registry.cargo_lost(self.contract_id)
+            if isinstance(self, PaymentShip) and hasattr(self, 'contract_id'):
+                contract_registry.payment_lost(self.contract_id)
+        except Exception:
+            pass
+        try:
+            # Bounty mission progress if a pirate raider is destroyed
+            if isinstance(self, PirateRaider):
+                for contract in dynamic_contracts.active_contracts[:]:
+                    if contract.mission_type == MissionType.BOUNTY_HUNT and contract.metadata:
+                        kills = int(contract.metadata.get('kills', 0)) + 1
+                        contract.metadata['kills'] = kills
+                        required = int(contract.metadata.get('kills_required', 1))
+                        if kills >= required:
+                            dynamic_contracts.complete_contract(contract.contract_id)
+                            print(f"🏆 Bounty completed: {contract.title}")
         except Exception:
             pass
         # Remove from system lists and destroy
@@ -4580,11 +5483,20 @@ class PaymentShip(TransportShip):
         """Deliver payment"""
         if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
             self.destination.enhanced_economy.credits += self.credits
-            
+        
         print(f"💳 Payment delivered to {getattr(self.destination, 'name', 'Unknown')}: {self.credits} credits")
-        # Notify contract completion
+        # Notify contract completion and physically propagate receipts
         if hasattr(self, 'contract_id'):
             contract_registry.payment_delivered(self.contract_id)
+            try:
+                payload = {'kind': 'CONTRACT_NOTICE', 'contract_id': self.contract_id, 'notice': 'PAYMENT_DELIVERED'}
+                if 'unified_transport_system' in globals():
+                    msg1 = MessageShip(self.origin, self.destination, MessageType.NEWS_BULLETIN, payload)
+                    msg2 = MessageShip(self.destination, self.origin, MessageType.NEWS_BULLETIN, payload)
+                    unified_transport_system.message_ships.append(msg1)
+                    unified_transport_system.message_ships.append(msg2)
+            except Exception:
+                pass
         super().on_arrival()
 
 class PirateRaider(TransportShip):
@@ -4618,15 +5530,13 @@ class PirateRaider(TransportShip):
         """Hunt for cargo ships or return to base"""
         if self.delivered:
             return
-            
+        # LOD-based skip handled upstream; keep logic small
         if self.hunting_mode:
             self.hunt_cargo_ships()
         else:
-            # Return to base with stolen goods
             if hasattr(self.pirate_base, 'position'):
                 direction = (self.pirate_base.position - self.position).normalized()
                 self.position += direction * self.speed * time.dt
-                
                 if (self.position - self.pirate_base.position).length() < 5:
                     self.return_to_base()
                     
@@ -4951,10 +5861,36 @@ class CombatSystem:
     def take_damage(self, damage):
         actual_damage = max(1, damage - self.get_defense_rating())
         self.player_health = max(0, self.player_health - actual_damage)
+        if self.player_health <= 0:
+            self.on_player_death()
         return actual_damage
         
     def heal(self, amount):
         self.player_health = min(self.max_health, self.player_health + amount)
+    def on_player_death(self):
+        # Basic game over: pause controls, show message, soft-respawn at nearest planet with penalty
+        print("💀 You were destroyed! Emergency rescue performed.")
+        penalty = min(1000, int(player_wallet.credits * 0.1))
+        if penalty > 0:
+            player_wallet.spend(penalty)
+            print(f"💸 Rescue fee: {penalty} credits")
+        # Restore health and fuel
+        self.player_health = self.max_health
+        ship_systems.fuel_system.current_fuel = max(ship_systems.fuel_system.max_fuel * 0.5, 10)
+        # Move player to nearest planet in space
+        try:
+            if planets:
+                nearest = min(planets, key=lambda p: (p.position - player.position).length())
+                player.position = nearest.position + Vec3(0, 5, -25)
+        except Exception:
+            pass
+        # Damage some components as consequence
+        try:
+            for comp in ship_systems.components.values():
+                if random.random() < 0.4:
+                    comp.take_damage(random.randint(5, 20))
+        except Exception:
+            pass
         
     def upgrade_weapons(self):
         cost = self.weapon_level * 300
@@ -5002,6 +5938,8 @@ class FactionSystem:
         self.player_reputation = {
             faction_id: 0 for faction_id in self.factions.keys()
         }
+        # Player heat (temporary law enforcement attention) per faction
+        self.player_heat = {faction_id: 0 for faction_id in self.factions.keys()}
         
         # Set up initial relationships between factions
         self.setup_faction_relationships()
@@ -5035,6 +5973,18 @@ class FactionSystem:
                 self.player_reputation[other_faction_id] += int(change * 0.3)
             elif relationship < -50:  # Enemy factions
                 self.player_reputation[other_faction_id] -= int(change * 0.2)
+        
+    def add_heat(self, faction_id, amount):
+        if faction_id in self.player_heat:
+            self.player_heat[faction_id] = max(0, self.player_heat[faction_id] + amount)
+            return self.player_heat[faction_id]
+        return 0
+    
+    def decay_heat(self, dt_seconds: float):
+        # Slow decay
+        for faction_id in self.player_heat:
+            if self.player_heat[faction_id] > 0:
+                self.player_heat[faction_id] = max(0, self.player_heat[faction_id] - dt_seconds * 0.01)
                 
     def get_reputation_status(self, faction_id):
         rep = self.player_reputation[faction_id]
@@ -5526,6 +6476,22 @@ class EnhancedPlanetEconomy:
         """Process incoming message"""
         if message_type == MessageType.GOODS_REQUEST:
             self.handle_goods_request(payload)
+        elif message_type == MessageType.NEWS_BULLETIN and isinstance(payload, dict):
+            kind = payload.get('kind')
+            if kind == 'CONTRACT_NOTICE':
+                contract_id = payload.get('contract_id')
+                notice = payload.get('notice')
+                # Origin informed cargo was lost, or dest informed payment is overdue
+                if notice == 'CARGO_LOST':
+                    try:
+                        contract_registry.mark_known(contract_id, 'origin')
+                    except Exception:
+                        pass
+                elif notice in ('PAYMENT_OVERDUE', 'PAYMENT_LOST'):
+                    try:
+                        contract_registry.mark_known(contract_id, 'dest')
+                    except Exception:
+                        pass
     
     def calculate_min_acceptable_price(self, commodity):
         """Supplier's minimum acceptable price per unit based on base price and local surplus."""
@@ -5845,13 +6811,73 @@ class UnifiedTransportSystemManager:
         all_ships = (self.message_ships + self.cargo_ships + self.payment_ships + 
                     self.raiders + self.smugglers)
         
+        # LOD-based update throttling by distance to player
+        player_pos = None
+        try:
+            if scene_manager.current_state == GameState.SPACE and scene_manager.space_controller:
+                player_pos = scene_manager.space_controller.position
+        except Exception:
+            player_pos = None
         for ship in all_ships[:]:  # Copy to avoid modification during iteration
+            # Decide update interval by distance
+            interval = SETTINGS['lod']['update_interval_near']
+            if player_pos is not None and hasattr(ship, 'position'):
+                try:
+                    d = (ship.position - player_pos).length()
+                    if d > SETTINGS['lod']['very_far_threshold']:
+                        interval = SETTINGS['lod']['update_interval_very_far']
+                    elif d > SETTINGS['lod']['visibility_threshold']:
+                        interval = SETTINGS['lod']['update_interval_far']
+                except Exception:
+                    pass
+            now = time.time()
+            if interval > 0:
+                if not hasattr(ship, '_next_update_time'):
+                    ship._next_update_time = now
+                if now < ship._next_update_time:
+                    # Skip this tick
+                    pass
+                else:
+                    ship._next_update_time = now + interval
+                    if hasattr(ship, 'update'):
+                        ship.update()
+            else:
             if hasattr(ship, 'update'):
                 ship.update()
                 
             # Remove delivered ships
             if hasattr(ship, 'delivered') and ship.delivered:
                 self.remove_ship(ship)
+        # Dynamic patrol spawning near high-threat routes
+        try:
+            if not hasattr(self, '_last_patrol_spawn'):
+                self._last_patrol_spawn = 0
+            if time.time() - self._last_patrol_spawn > SETTINGS.get('patrol_spawn_interval_sec', 60):
+                threat = self.calculate_threat_level()
+                if threat in ("HIGH", "EXTREME") and self.cargo_ships:
+                    # Pick a cargo ship on a route and spawn a patrol near it
+                    target = random.choice(self.cargo_ships)
+                    pos = target.position + Vec3(random.uniform(-25, 25), 0, random.uniform(-25, 25))
+                    faction_id = 'terran_federation'  # Default patrol faction; could be dynamic by region
+                    patrol = MilitaryShip(faction_id, MilitaryShipType.PATROL, pos, patrol_radius=150)
+                    patrol.patrol_center = pos
+                    if 'military_manager' in globals():
+                        military_manager.military_ships.append(patrol)
+                self._last_patrol_spawn = time.time()
+            # Reactive escorts along player's current route
+            if hasattr(player, 'course_route') and player.course_route and player.autopilot:
+                try:
+                    # Occasionally spawn friendly patrols near current leg
+                    if random.random() < 0.1 and self.cargo_ships:
+                        pos = player.position + Vec3(random.uniform(-35, 35), 0, random.uniform(-35, 35))
+                        faction_id = getattr(next((pl for pl in planets if pl.name == player.course_route[player.course_route_index]), None), 'faction_id', 'terran_federation')
+                        patrol = MilitaryShip(faction_id, MilitaryShipType.PATROL, pos, patrol_radius=120)
+                        patrol.patrol_center = pos
+                        military_manager.military_ships.append(patrol)
+                except Exception:
+                    pass
+        except Exception:
+            pass
                     
     def remove_ship(self, ship):
         """Remove ship from appropriate list"""
@@ -5944,8 +6970,34 @@ class TransportContractRegistry:
         self._counter += 1
         return f"CONTRACT-{int(time.time())}-{self._counter}"
 
+    def _estimate_eta(self, origin_planet, dest_planet) -> float:
+        try:
+            distance = (origin_planet.position - dest_planet.position).length()
+            avg_speed = 8.0
+            travel_time = max(60.0, distance / avg_speed)
+            return time.time() + travel_time
+        except Exception:
+            return time.time() + 300.0
+
     def register_contract(self, origin_planet, dest_planet, commodity, quantity, unit_price, total_cost) -> str:
         cid = self._next_id()
+        # Insurance premium based on route risk
+        premium_ratio = SETTINGS.get('insurance_premium_ratio', 0.05)
+        risk_multiplier = 1.0
+        try:
+            # Increase premium with pirate threat level
+            threat = unified_transport_system.calculate_threat_level()
+            risk_multiplier = SETTINGS.get('threat_premium_multipliers', {}).get(threat, 1.0)
+        except Exception:
+            pass
+        premium = int(total_cost * premium_ratio * risk_multiplier)
+        # Charge premium from origin up-front (can be extended to buyer/seller choice)
+        try:
+            if hasattr(origin_planet, 'enhanced_economy') and origin_planet.enhanced_economy and premium > 0:
+                origin_planet.enhanced_economy.credits = max(0, origin_planet.enhanced_economy.credits - premium)
+        except Exception:
+            pass
+        eta = self._estimate_eta(origin_planet, dest_planet)
         self._contracts[cid] = {
             'origin': origin_planet,
             'dest': dest_planet,
@@ -5953,7 +7005,14 @@ class TransportContractRegistry:
             'quantity': quantity,
             'unit_price': unit_price,
             'total_cost': total_cost,
-            'status': 'cargo_in_transit'
+            'status': 'cargo_in_transit',
+            'insured': True,
+            'insurance_premium': premium,
+            'expected_arrival': eta,
+            'arrival_grace': 180.0,
+            'known_to_origin': False,
+            'known_to_dest': False,
+            'inquiry_sent': False
         }
         return cid
 
@@ -5966,27 +7025,96 @@ class TransportContractRegistry:
         payment_ship.contract_id = contract_id
         unified_transport_system.payment_ships.append(payment_ship)
         data['status'] = 'payment_in_transit'
+        data['known_to_origin'] = True
+        data['known_to_dest'] = True
 
     def cargo_lost(self, contract_id: str):
         data = self._contracts.get(contract_id)
         if not data:
             return
-        # Refund escrow to destination since goods never arrived
-        if hasattr(data['dest'], 'enhanced_economy') and data['dest'].enhanced_economy:
-            data['dest'].enhanced_economy.credits += int(data['total_cost'])
-            # Remove expected delivery
-            exp = data['dest'].enhanced_economy.expected_deliveries
-            exp[data['commodity']] = max(0, exp.get(data['commodity'], 0) - data['quantity'])
+        # Mark as lost; knowledge propagates physically or by timeout message
         data['status'] = 'failed_cargo_lost'
+        data['lost_time'] = time.time()
 
     def payment_delivered(self, contract_id: str):
         data = self._contracts.get(contract_id)
         if not data:
             return
         # Credit supplier upon payment arrival
-        if hasattr(data['origin'], 'enhanced_economy') and data['origin'].enhanced_economy:
-            data['origin'].enhanced_economy.credits += int(data['total_cost'])
-        data['status'] = 'completed'
+        try:
+            if hasattr(data['origin'], 'enhanced_economy') and data['origin'].enhanced_economy:
+                data['origin'].enhanced_economy.credits += int(data['total_cost'])
+            data['status'] = 'completed'
+            data['known_to_origin'] = True
+            data['known_to_dest'] = True
+        except Exception:
+            pass
+
+    def payment_lost(self, contract_id: str):
+        data = self._contracts.get(contract_id)
+        if not data:
+            return
+        # Payment ship destroyed: default to seller loss unless insured
+        try:
+            insured = data.get('insured', True)  # Default insured for now
+            payout_ratio = SETTINGS.get('insurance_payout_ratio', 0.6)
+            if insured and hasattr(data['origin'], 'enhanced_economy') and data['origin'].enhanced_economy:
+                compensation = int(data['total_cost'] * payout_ratio)
+                data['origin'].enhanced_economy.credits += compensation
+                data['insurance_payout'] = compensation
+                data['status'] = 'payment_lost_insured'
+                print(f"🧾 Insurance payout {compensation} to {getattr(data['origin'],'name','origin')} for contract {contract_id}")
+            else:
+                data['status'] = 'payment_lost_uninsured'
+                print(f"❌ Payment lost with no insurance for contract {contract_id}")
+        except Exception:
+            pass
+
+    def mark_known(self, contract_id: str, party: str):
+        data = self._contracts.get(contract_id)
+        if not data:
+            return
+        if party == 'dest':
+            data['known_to_dest'] = True
+            if data.get('status') == 'failed_cargo_lost':
+                # On dest knowledge, reconcile escrow and expected deliveries
+                try:
+                    if hasattr(data['dest'], 'enhanced_economy') and data['dest'].enhanced_economy:
+                        data['dest'].enhanced_economy.credits += int(data['total_cost'])
+                        exp = data['dest'].enhanced_economy.expected_deliveries
+                        exp[data['commodity']] = max(0, exp.get(data['commodity'], 0) - data['quantity'])
+                except Exception:
+                    pass
+        elif party == 'origin':
+            data['known_to_origin'] = True
+
+    def update(self):
+        # Send inquiry messages when overdue loss is suspected
+        try:
+            for cid, data in list(self._contracts.items()):
+                deadline = data.get('expected_arrival', 0) + data.get('arrival_grace', 180.0)
+                if data.get('status') == 'failed_cargo_lost' and not data.get('inquiry_sent'):
+                    if time.time() > deadline:
+                        try:
+                            payload = {'kind': 'CONTRACT_NOTICE', 'contract_id': cid, 'notice': 'CARGO_LOST'}
+                            msg = MessageShip(data['dest'], data['origin'], MessageType.NEWS_BULLETIN, payload)
+                            unified_transport_system.message_ships.append(msg)
+                            data['inquiry_sent'] = True
+                            self.mark_known(cid, 'dest')
+                        except Exception:
+                            pass
+                # Payment overdue: if payment_in_transit far beyond ETA, send notice to dest
+                if data.get('status') == 'payment_in_transit' and not data.get('inquiry_sent'):
+                    if time.time() > deadline + SETTINGS.get('payment_overdue_grace', 240.0):
+                        try:
+                            payload = {'kind': 'CONTRACT_NOTICE', 'contract_id': cid, 'notice': 'PAYMENT_OVERDUE'}
+                            msg = MessageShip(data['origin'], data['dest'], MessageType.NEWS_BULLETIN, payload)
+                            unified_transport_system.message_ships.append(msg)
+                            data['inquiry_sent'] = True
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
 contract_registry = TransportContractRegistry()
 
@@ -6031,6 +7159,101 @@ def initialize_enhanced_economies():
     print(f"✅ Enhanced transport system initialized with {pirate_base_count} pirate bases")
     # Build a global mapping of planet name -> enhanced economy for systems that expect it
     globals()['enhanced_planet_economies'] = {p.name: p.enhanced_economy for p in planets if hasattr(p, 'enhanced_economy') and p.enhanced_economy}
+
+# ===== SETTINGS =====
+SETTINGS = {
+    'autosave_interval_sec': 120,
+    'sanitize_interval_sec': 30,
+    'landing_docking_fee': 25,
+    'escort_base_fee': 500,
+    'escort_follow_minutes': 3,
+    'insurance_premium_ratio': 0.05,
+    'insurance_payout_ratio': 0.6,
+    'threat_premium_multipliers': {
+        'LOW': 1.0, 'MEDIUM': 1.2, 'HIGH': 1.5, 'EXTREME': 2.0
+    },
+    'strict_factions': ['terran_federation', 'mars_republic'],
+    'contraband_goods': ['weapons', 'narcotics'],
+    'contraband_base_scan_chance': 0.15,
+    'contraband_heat_increase': 20,
+    'heat_decay_per_sec': 0.01,
+    'patrol_spawn_interval_sec': 60,
+    'lod': {
+        'visibility_threshold': 800.0,
+        'very_far_threshold': 1500.0,
+        'update_interval_near': 0.0,
+        'update_interval_far': 0.5,
+        'update_interval_very_far': 2.0,
+    },
+    'ship_child_hide_distance': 900.0,
+    'town_prop_hide_distance': 70.0,
+}
+
+# ===== GALAXY GRAPH / ROUTING =====
+planet_graph = {}
+
+def _distance(a: 'Vec3', b: 'Vec3') -> float:
+    try:
+        return (a - b).length()
+    except Exception:
+        return 0.0
+
+def rebuild_planet_graph(k_neighbors: int = 3):
+    global planet_graph
+    planet_graph = {}
+    try:
+        for p in planets:
+            planet_graph[p.name] = []
+        for p in planets:
+            # Find k nearest other planets
+            others = sorted(
+                [q for q in planets if q is not p],
+                key=lambda q: _distance(p.position, q.position)
+            )[:max(1, k_neighbors)]
+            for q in others:
+                w = _distance(p.position, q.position)
+                planet_graph[p.name].append((q.name, w))
+                # Ensure undirected edge
+                if q.name in planet_graph:
+                    if all(n != p.name for n, _ in planet_graph[q.name]):
+                        planet_graph[q.name].append((p.name, w))
+    except Exception:
+        planet_graph = {}
+
+def find_route(origin_name: str, dest_name: str, avoid_blockades: bool = True):
+    # Dijkstra's algorithm over planet_graph
+    try:
+        import heapq
+        pq = []
+        heapq.heappush(pq, (0.0, origin_name, None))
+        dist = {origin_name: 0.0}
+        prev = {}
+        visited = set()
+        while pq:
+            d, u, _ = heapq.heappop(pq)
+            if u in visited:
+                continue
+            visited.add(u)
+            if u == dest_name:
+                break
+            for v, w in planet_graph.get(u, []):
+                if avoid_blockades and military_manager.is_planet_blockaded(v):
+                    continue
+                nd = d + w
+                if v not in dist or nd < dist[v]:
+                    dist[v] = nd
+                    prev[v] = u
+                    heapq.heappush(pq, (nd, v, u))
+        if dest_name not in prev and origin_name != dest_name:
+            return []
+        # Reconstruct path
+        path = [dest_name]
+        while path[-1] != origin_name and path[-1] in prev:
+            path.append(prev[path[-1]])
+        path.reverse()
+        return path
+    except Exception:
+        return []
 
 # Create systems
 random_event_system = RandomEventSystem()
@@ -6136,6 +7359,24 @@ class TradingUI:
             scale=1,
             color=color.yellow
         )
+        # Quick refuel subpanel
+        self.refuel_panel = Panel(
+            parent=self.panel,
+            model='quad',
+            scale=(0.42, 0.26),
+            position=(0.45, -0.05),
+            color=color.black66,
+            enabled=False
+        )
+        self.refuel_text = Text(parent=self.refuel_panel, text='', position=(0, 0.07), scale=0.75, color=color.cyan)
+        self.btn_plus1 = Button(text='+1', parent=self.refuel_panel, position=(-0.14, -0.06), scale=(0.12, 0.08))
+        self.btn_plus10 = Button(text='+10', parent=self.refuel_panel, position=(0.0, -0.06), scale=(0.12, 0.08))
+        self.btn_fill = Button(text='Fill', parent=self.refuel_panel, position=(0.14, -0.06), scale=(0.12, 0.08))
+        self.btn_close_refuel = Button(text='X', parent=self.refuel_panel, position=(0.19, 0.1), scale=(0.06, 0.06))
+        self.btn_plus1.on_click = lambda: self._refuel_amount(1)
+        self.btn_plus10.on_click = lambda: self._refuel_amount(10)
+        self.btn_fill.on_click = self._refuel_fill
+        self.btn_close_refuel.on_click = lambda: self._toggle_refuel(False)
         
         # Commodity list
         self.commodity_list = Text(
@@ -6158,6 +7399,13 @@ class TradingUI:
     def show(self, planet_name):
         self.current_planet = planet_name
         ui_manager.show(self)
+        # Enable refuel panel if station is present
+        try:
+            planet_obj = next((p for p in planets if getattr(p, 'name', None) == planet_name), None)
+            has_station = bool(planet_obj and getattr(planet_obj, 'has_fuel_station', False))
+            self._toggle_refuel(has_station)
+        except Exception:
+            self._toggle_refuel(False)
         self.update_display()
         
     def hide(self):
@@ -6178,6 +7426,17 @@ class TradingUI:
         
         # Update player info
         self.player_info.text = f'Credits: {player_wallet.credits}\nCargo: {player_cargo.get_used_capacity()}/{player_cargo.max_capacity}'
+        # Update refuel info
+        try:
+            if self.refuel_panel.enabled and self.current_planet:
+                planet_obj = next((p for p in planets if getattr(p, 'name', None) == self.current_planet), None)
+                if planet_obj:
+                    unit = getattr(planet_obj, 'fuel_price', 5)
+                    missing = max(0.0, ship_systems.fuel_system.max_fuel - ship_systems.fuel_system.current_fuel)
+                    est = int(missing * unit)
+                    self.refuel_text.text = f"⛽ Fuel {ship_systems.fuel_system.current_fuel:.1f}/{ship_systems.fuel_system.max_fuel:.1f} | {unit}/unit | Fill: {est}"
+        except Exception:
+            pass
         
         # Update commodity list with realistic supply data
         commodity_text = "COMMODITIES:\n\n"
@@ -6225,6 +7484,52 @@ class TradingUI:
                 return True
                 
         return False
+    
+    def _toggle_refuel(self, on: bool):
+        self.refuel_panel.enabled = bool(on)
+        
+    def _refuel_amount(self, amount: float):
+        try:
+            if not self.current_planet:
+                return
+            planet_obj = next((p for p in planets if getattr(p, 'name', None) == self.current_planet), None)
+            if not planet_obj or not getattr(planet_obj, 'has_fuel_station', False):
+                return
+            unit_price = getattr(planet_obj, 'fuel_price', 5)
+            missing = max(0.0, ship_systems.fuel_system.max_fuel - ship_systems.fuel_system.current_fuel)
+            to_buy = min(amount, missing)
+            cost = int(to_buy * unit_price)
+            if to_buy <= 0:
+                return
+            if player_wallet.can_afford(cost):
+                ship_systems.fuel_system.refuel(to_buy)
+                player_wallet.spend(cost)
+                self.update_display()
+            else:
+                print("💰 Not enough credits to refuel")
+        except Exception:
+            pass
+        
+    def _refuel_fill(self):
+        try:
+            if not self.current_planet:
+                return
+            planet_obj = next((p for p in planets if getattr(p, 'name', None) == self.current_planet), None)
+            if not planet_obj or not getattr(planet_obj, 'has_fuel_station', False):
+                return
+            unit_price = getattr(planet_obj, 'fuel_price', 5)
+            missing = max(0.0, ship_systems.fuel_system.max_fuel - ship_systems.fuel_system.current_fuel)
+            cost = int(missing * unit_price)
+            if missing <= 0:
+                return
+            if player_wallet.can_afford(cost):
+                ship_systems.fuel_system.refuel(missing)
+                player_wallet.spend(cost)
+                self.update_display()
+            else:
+                print("💰 Not enough credits to fully refuel")
+        except Exception:
+            pass
         
     def buy_commodity(self, commodity_name):
         buy_price = market_system.get_buy_price(self.current_planet, commodity_name)
@@ -6265,6 +7570,19 @@ class TradingUI:
             player_cargo.remove_cargo(commodity_name, 1)
             player_wallet.earn(sell_price)
             print(f"✅ Sold 1 {commodity_name.replace('_', ' ')} for {sell_price} credits")
+            # Timed delivery contract hook
+            try:
+                for contract in dynamic_contracts.active_contracts[:]:
+                    if (contract.mission_type == MissionType.CARGO_DELIVERY and contract.metadata and contract.metadata.get('timed')):
+                        if contract.metadata.get('dest') == self.current_planet and contract.metadata.get('commodity') == commodity_name:
+                            delivered = int(contract.metadata.get('delivered', 0)) + 1
+                            contract.metadata['delivered'] = delivered
+                            required = int(contract.metadata.get('quantity', 0))
+                            if delivered >= required:
+                                dynamic_contracts.complete_contract(contract.contract_id)
+                                print(f"✅ Timed delivery completed: {contract.title}")
+            except Exception:
+                pass
             
             # Check if this sale helped with shortages
             planet_info = market_system.get_planet_info(self.current_planet)
@@ -6325,7 +7643,7 @@ class UpgradeUI:
         # Instructions
         self.instructions = Text(
             parent=self.panel,
-            text='Press 1-5 to purchase upgrades\nESC to close',
+            text='Press 1-5 to purchase upgrades\nPress R for emergency hull repair (cost varies)\nESC to close',
             position=(0, -0.35),
             scale=1,
             color=color.light_gray
@@ -6376,6 +7694,20 @@ class UpgradeUI:
         upgrade_text += f"5. Shields Upgrade - {shield_cost} credits {shield_affordable}\n"
         upgrade_text += f"   Current Level: {combat_system.shield_level} -> {combat_system.shield_level + 1}\n"
         
+        # Emergency repair section if hull critical
+        try:
+            hull = ship_systems.components.get(ComponentType.HULL)
+            if hull and hull.condition == ComponentCondition.CRITICAL:
+                # Cost scales with missing integrity
+                missing = max(0, hull.max_integrity - hull.current_integrity)
+                repair_units = max(1, missing)
+                repair_cost = int(repair_units * 5)  # 5 credits per integrity point
+                upgrade_text += f"\nEMERGENCY REPAIR AVAILABLE:\n"
+                upgrade_text += f" - Restore hull integrity ({missing} pts missing)\n"
+                upgrade_text += f" - Cost: {repair_cost} credits (Press R)\n"
+        except Exception:
+            pass
+        
         self.upgrade_list.text = upgrade_text
         
     def handle_input(self, key):
@@ -6412,6 +7744,21 @@ class UpgradeUI:
                 self.update_display()
             else:
                 print("Cannot afford shields upgrade!")
+            return True
+        elif key == 'r':
+            # Emergency hull repair
+            hull = ship_systems.components.get(ComponentType.HULL)
+            if hull and hull.condition == ComponentCondition.CRITICAL:
+                missing = max(0, hull.max_integrity - hull.current_integrity)
+                repair_units = max(1, missing)
+                repair_cost = int(repair_units * 5)
+                if player_wallet.can_afford(repair_cost):
+                    player_wallet.spend(repair_cost)
+                    hull.repair(missing)
+                    print(f"🔧 Emergency hull repair completed (+{missing} integrity) for {repair_cost} credits")
+                    self.update_display()
+                else:
+                    print("💰 Not enough credits for emergency repair")
             return True
                 
         return False
@@ -6716,6 +8063,7 @@ class CrewUI:
 class MissionUI:
     def __init__(self):
         self.active = False
+        self._available_index_to_id = {}
         
         # Main mission panel
         self.panel = Panel(
@@ -6747,77 +8095,196 @@ class MissionUI:
         # Instructions
         self.instructions = Text(
             parent=self.panel,
-            text='1-5 to accept mission • ESC to close',
+            text='1-5 to accept mission • A to abandon first active • ESC to close',
             position=(0, -0.35),
             scale=1,
             color=color.light_gray
         )
         
+# ===== MAP UI =====
+class MapUI:
+    def __init__(self):
+        self.active = False
+        self.panel = Panel(parent=camera.ui, model='quad', scale=(0.92, 0.9), color=color.black66, enabled=False)
+        self.title = Text(parent=self.panel, text='GALACTIC MAP', position=(0, 0.4), scale=1.8, color=color.yellow)
+        self.legend = Text(parent=self.panel, text='Lanes ▬▬  Blockade 🚫  Set course: number', position=(-0.6, 0.35), scale=0.8, color=color.light_gray)
+        self.map_text = Text(parent=self.panel, text='', position=(-0.6, 0.25), scale=0.8, color=color.white)
+        self.instructions = Text(parent=self.panel, text='1-9: Set course to listed planet • ESC: close', position=(0, -0.4), scale=0.9, color=color.light_gray)
+        self._index_to_planet = {}
+        
     def show(self):
         ui_manager.show(self)
-        mission_system.generate_missions()
         self.update_display()
         
     def hide(self):
         ui_manager.hide(self)
         
     def update_display(self):
-        mission_text = "AVAILABLE MISSIONS:\n\n"
+        # Build a simple list of planets with flags and distances
+        self._index_to_planet.clear()
+        lines = []
+        if scene_manager.current_state == GameState.SPACE and scene_manager.space_controller:
+            pos = scene_manager.space_controller.position
+        else:
+            pos = Vec3(0, 0, 0)
+        # Build/update graph once
+        try:
+            rebuild_planet_graph(k_neighbors=3)
+        except Exception:
+            pass
+        # Sort by distance
+        plist = sorted(planets, key=lambda p: (p.position - pos).length())
+        for i, p in enumerate(plist[:9]):
+            dist = int((p.position - pos).length())
+            name = getattr(p, 'name', f'Planet{i+1}')
+            blocked = '🚫' if military_manager.is_planet_blockaded(name) else ' '
+            self._index_to_planet[i+1] = name
+            lines.append(f"{i+1}. {name} {blocked}  ({dist}u)")
+        # Lanes summary
+        lanes = max(0, unified_transport_system.count_active_routes())
+        lines.append(f"\nActive trade lanes: {lanes}")
+        # Highlight destinations of active contracts
+        try:
+            if dynamic_contracts.active_contracts:
+                lines.append("Active contract targets:")
+                for c in dynamic_contracts.active_contracts[:5]:
+                    dest = c.metadata.get('dest') if c.metadata else None
+                    if dest:
+                        lines.append(f" • {c.title} → {dest}")
+                        # Show suggested route steps
+                        origin = getattr(scene_manager.current_planet, 'name', None)
+                        if not origin and planets:
+                            # approximate origin by nearest planet
+                            origin = min(planets, key=lambda p: (p.position - pos).length()).name
+                        route = find_route(origin, dest)
+                        if route:
+                            lines.append(f"    Route: {' -> '.join(route)}")
+        except Exception:
+            pass
+        # Threat
+        lines.append(f"Pirate threat: {unified_transport_system.calculate_threat_level()}")
+        self.map_text.text = "\n".join(lines)
         
-        for i, mission in enumerate(mission_system.available_missions[:5]):  # Show first 5
-            faction_name = faction_system.factions[mission.faction_id].name
-            reputation_req = faction_system.get_reputation_status(mission.faction_id)
-            
-            mission_text += f"{i+1}. {mission.description}\n"
-            mission_text += f"   Client: {faction_name}\n"
-            mission_text += f"   Reward: {mission.reward} credits\n"
-            mission_text += f"   Reputation: +{mission.reputation_change}\n\n"
-            
-        if not mission_system.available_missions:
-            mission_text += "No missions available. Check back later."
-            
-        self.mission_list.text = mission_text
+    def handle_input(self, key):
+        if not self.active:
+            return False
+        if key in '123456789':
+            idx = int(key)
+            if idx in self._index_to_planet:
+                target = self._index_to_planet[idx]
+                print(f"🧭 Course set to {target}")
+                try:
+                    # Build multi-hop route from current/nearest planet to target
+                    if scene_manager.current_planet:
+                        origin = scene_manager.current_planet.name
+                    else:
+                        # Use nearest planet to player as origin
+                        pos = scene_manager.space_controller.position if scene_manager.current_state == GameState.SPACE else Vec3(0, 0, 0)
+                        origin = min(planets, key=lambda p: (p.position - pos).length()).name if planets else target
+                    route = find_route(origin, target)
+                    if not route:
+                        route = [target]
+                    player.course_route = route
+                    player.course_route_index = 0
+                    player.autopilot = True
+                except Exception:
+                    pass
+                self.update_display()
+                return True
+        return False
+        
+    def show(self):
+        ui_manager.show(self)
+        self.update_display()
+        
+    def hide(self):
+        ui_manager.hide(self)
+        
+    def update_display(self):
+        # Build content from dynamic contracts
+        self._available_index_to_id.clear()
+        lines = ["AVAILABLE CONTRACTS:\n"]
+        now = time.time()
+        available = dynamic_contracts.available_contracts[:5]
+        for i, c in enumerate(available):
+            self._available_index_to_id[i+1] = c.contract_id
+            remaining = max(0, int((c.time_limit - (now - c.start_time)) / 60))
+            reward = c.rewards.get('credits', 0) if isinstance(c.rewards, dict) else 0
+            lines.append(f"{i+1}. {c.title}\n")
+            lines.append(f"   Client: {c.client_faction} | Reward: {reward} cr | Time: {remaining}m\n")
+            lines.append(f"   {c.description}\n\n")
+        if not available:
+            lines.append("No contracts available. Check back later.\n\n")
+
+        # Active section
+        lines.append("ACTIVE CONTRACTS:\n")
+        active = dynamic_contracts.active_contracts[:5]
+        for c in active:
+            remaining = max(0, int((c.time_limit - (now - c.start_time)) / 60))
+            reward = c.rewards.get('credits', 0) if isinstance(c.rewards, dict) else 0
+            lines.append(f"• {c.title} | Status: {c.status.value} | Reward: {reward} cr | Time left: {remaining}m\n")
+            if c.metadata and c.metadata.get('timed'):
+                need = int(c.metadata.get('quantity', 0))
+                have = int(c.metadata.get('delivered', 0))
+                lines.append(f"   Progress: {have}/{need} {c.metadata.get('commodity','')} to {c.metadata.get('dest','')}\n")
+            if c.mission_type == MissionType.BOUNTY_HUNT and c.metadata:
+                need = int(c.metadata.get('kills_required', 1))
+                have = int(c.metadata.get('kills', 0))
+                lines.append(f"   Progress: {have}/{need} pirate raiders destroyed near {c.metadata.get('target_planet','')}\n")
+            # Abandon hint
+            lines.append("   Press A to abandon (penalties apply)\n")
+            # Pin-to-course hint
+            lines.append("   Press P to pin destination and engage autopilot\n")
+        if not active:
+            lines.append("No active contracts.\n")
+
+        self.mission_list.text = "".join(lines)
         
     def handle_input(self, key):
         if not self.active:
             return False
             
         if key in '12345':
-            mission_index = int(key) - 1
-            if mission_index < len(mission_system.available_missions):
-                mission = mission_system.available_missions[mission_index]
-                self.accept_mission(mission)
+            sel = int(key)
+            if sel in self._available_index_to_id:
+                cid = self._available_index_to_id[sel]
+                if dynamic_contracts.accept_contract(cid):
+        self.update_display()
                 return True
+        if key.lower() == 'a':
+            # Abandon first active contract for simplicity
+            if dynamic_contracts.active_contracts:
+                c = dynamic_contracts.active_contracts[0]
+                dynamic_contracts.fail_contract(c, reason="Abandoned by player")
+                self.update_display()
+                return True
+        if key.lower() == 'p':
+            # Pin first active contract destination as course
+            if dynamic_contracts.active_contracts:
+                c = dynamic_contracts.active_contracts[0]
+                dest = c.metadata.get('dest') if c.metadata else None
+                if dest:
+                    try:
+                        # Multi-hop route to contract destination
+                        if scene_manager.current_planet:
+                            origin = scene_manager.current_planet.name
+                        else:
+                            pos = scene_manager.space_controller.position if scene_manager.current_state == GameState.SPACE else Vec3(0, 0, 0)
+                            origin = min(planets, key=lambda p: (p.position - pos).length()).name if planets else dest
+                        route = find_route(origin, dest)
+                        if not route:
+                            route = [dest]
+                        player.course_route = route
+                        player.course_route_index = 0
+                        player.autopilot = True
+                        print(f"🧭 Course pinned to {dest} from contracts")
+                    except Exception:
+                        pass
+                    return True
                 
         return False
         
-    def accept_mission(self, mission):
-        # Check if player has good enough reputation
-        player_rep = faction_system.player_reputation[mission.faction_id]
-        if player_rep < -50:
-            print(f"Reputation too low with {faction_system.factions[mission.faction_id].name}!")
-            return
-            
-        mission_system.active_missions.append(mission)
-        mission_system.available_missions.remove(mission)
-        print(f"Accepted mission: {mission.description}")
-        print(f"Mission will auto-complete for now...")
-        
-        # Auto-complete mission for demonstration
-        self.complete_mission(mission)
-        
-    def complete_mission(self, mission):
-        # Award rewards
-        player_wallet.earn(mission.reward)
-        faction_system.change_reputation(mission.faction_id, mission.reputation_change)
-        
-        print(f"Mission completed! Earned {mission.reward} credits and reputation.")
-        
-        # Remove from active missions
-        if mission in mission_system.active_missions:
-            mission_system.active_missions.remove(mission)
-            
-        self.update_display()
+    # Legacy mission accept/complete removed in favor of dynamic contracts
 
 # Create UI systems
 faction_ui = FactionUI()
@@ -6826,6 +8293,10 @@ mission_ui = MissionUI()
 ui_manager.register(faction_ui)
 ui_manager.register(crew_ui)
 ui_manager.register(mission_ui)
+manufacturing_ui = ManufacturingUI()
+ui_manager.register(manufacturing_ui)
+map_ui = MapUI()
+ui_manager.register(map_ui)
 
 def update():
     global nearby_planet
@@ -6861,11 +8332,11 @@ def update():
             else:
                 if nearest_planet is not None and nearest_dist < landing_show_threshold and not ui_manager.any_active():
                     landing_text.text = f"Approaching {nearest_planet.name}\nDo you want to land?"
-                    landing_prompt.enabled = True
-                    land_button.enabled = True
-                    cancel_button.enabled = True
+                landing_prompt.enabled = True
+                land_button.enabled = True
+                cancel_button.enabled = True
                     # Freeze player; let UI manager show cursor
-                    player.enabled = False
+                player.enabled = False
                     globals()['nearby_planet'] = nearest_planet
                     globals()['landing_prompt_active'] = True
                     if 'ui_manager' in globals():
@@ -6924,6 +8395,28 @@ def update():
     
     # Update enhanced Pirates! features
     enhanced_features.update(time.dt, player.position, time.time())
+    # Decay faction heat slowly
+    try:
+        faction_system.decay_heat(time.dt)
+    except Exception:
+        pass
+    # World sanitization: enforce invariants periodically
+    try:
+        if not hasattr(update, '_last_sanitize'):
+            update._last_sanitize = time.time()
+        if time.time() - update._last_sanitize > SETTINGS.get('sanitize_interval_sec', 30):
+            # No negative stockpiles/credits
+            for p in planets:
+                econ = getattr(p, 'enhanced_economy', None)
+                if econ:
+                    for k in list(econ.stockpiles.keys()):
+                        if econ.stockpiles[k] < 0:
+                            econ.stockpiles[k] = 0
+                    if econ.credits < 0:
+                        econ.credits = 0
+            update._last_sanitize = time.time()
+    except Exception:
+        pass
     
     # Update unified transport system
     unified_transport_system.update()
@@ -6937,6 +8430,20 @@ def update():
     weather_system.update()
     military_manager.update()
     dynamic_contracts.update()
+    # Update contract registry for physical knowledge/inquiry
+    try:
+        contract_registry.update()
+    except Exception:
+        pass
+    # Periodic autosave every 2 minutes
+    try:
+        if not hasattr(update, '_last_autosave'):
+            update._last_autosave = time.time()
+        if time.time() - update._last_autosave > SETTINGS.get('autosave_interval_sec', 120):
+            save_game()
+            update._last_autosave = time.time()
+    except Exception:
+        pass
 
 # Function to handle landing
 def land_on_planet():
@@ -6962,6 +8469,45 @@ def land_on_planet():
                     mouse.visible = False
                     return
         
+        # Reputation-based access: deny landing if hostile
+        try:
+            if hasattr(nearby_planet, 'faction_id') and nearby_planet.faction_id:
+                rep = faction_system.player_reputation.get(nearby_planet.faction_id, 0)
+                if rep < -50:
+                    print(f"🚫 Landing denied at {nearby_planet.name} due to hostile reputation with {nearby_planet.faction_id}.")
+                    # Hide landing prompt but don't land
+                    landing_prompt.enabled = False
+                    nearby_planet = None
+                    player.enabled = True
+                    mouse.locked = True
+                    mouse.visible = False
+                    return
+            # Damage-based landing restriction: if hull critical and no shipyard, deny landing
+            hull = ship_systems.components.get(ComponentType.HULL)
+            if hull and hull.condition == ComponentCondition.CRITICAL:
+                # Our town layout always includes a shipyard, but keep logic for future variation
+                has_shipyard = True
+                if not has_shipyard:
+                    print(f"🚫 Landing denied: Hull critical and no shipyard present on {nearby_planet.name}.")
+                    landing_prompt.enabled = False
+                    nearby_planet = None
+                    player.enabled = True
+                    mouse.locked = True
+                    mouse.visible = False
+                    return
+        except Exception:
+            pass
+        # Fuel-based caution: small docking fee and optional auto-refuel prompt
+        try:
+            if getattr(nearby_planet, 'has_fuel_station', False):
+                docking_fee = 25
+                if player_wallet.can_afford(docking_fee):
+                    player_wallet.spend(docking_fee)
+                    print(f"🛬 Docking fee paid: {docking_fee} credits at {nearby_planet.name}")
+                else:
+                    print(f"⚠️ Unable to pay docking fee ({docking_fee} credits). Relations may suffer later.")
+        except Exception:
+            pass
         # PHYSICAL COMMUNICATION: Player learns local news upon landing
         print(f"\n🚀 Landing on {nearby_planet.name}...")
         physical_communication.player_visits_planet(nearby_planet.name)
@@ -6970,6 +8516,30 @@ def land_on_planet():
         scene_manager.current_planet = nearby_planet
         # Switch to town mode
         scene_manager.switch_to_town()
+        # After entering town, if fuel station exists, offer quick refuel in console
+        try:
+            if getattr(nearby_planet, 'has_fuel_station', False):
+                missing = max(0.0, ship_systems.fuel_system.max_fuel - ship_systems.fuel_system.current_fuel)
+                if missing > 0:
+                    unit_price = getattr(nearby_planet, 'fuel_price', 5)
+                    est = int(missing * unit_price)
+                    print(f"⛽ Fuel available. Missing: {missing:.1f} units. Price: {unit_price}/unit. Est. cost to fill: {est} credits.")
+                    # Auto-refuel if affordable and low fuel
+                    if ship_systems.fuel_system.current_fuel < ship_systems.fuel_system.max_fuel * 0.25 and player_wallet.can_afford(est):
+                        ship_systems.fuel_system.refuel(missing)
+                        player_wallet.spend(est)
+                        print(f"✅ Auto-refueled for {est} credits.")
+        except Exception:
+            pass
+        # If hull is critical, auto-open shipyard for emergency repair
+        try:
+            hull = ship_systems.components.get(ComponentType.HULL)
+            if hull and hull.condition == ComponentCondition.CRITICAL:
+                print("🔧 Critical hull detected. Opening shipyard for emergency repairs.")
+                ui_manager.hide_all()
+                upgrade_ui.show()
+        except Exception:
+            pass
         # Hide landing prompt
         landing_prompt.enabled = False
         # Reset nearby planet
@@ -7043,12 +8613,12 @@ def input(key):
         save_button.enabled = paused
         load_button.enabled = paused
         quit_button.enabled = paused
-
+        
         if scene_manager.current_state == GameState.SPACE:
             player.enabled = not paused
         else:
             scene_manager.town_controller.enabled = not paused
-
+            
         # Centralized cursor control
         if 'ui_manager' in globals():
             ui_manager.update_cursor()
@@ -7129,6 +8699,54 @@ def input(key):
         else:
             scene_manager.switch_to_space()
     
+    # Player distress call for escort (fee-based)
+    if key == 'p' and scene_manager.current_state == GameState.SPACE and not paused:
+        # Spawn two escorts that follow the player for a limited time
+        # Region-based faction: nearest planet's faction; adjust fee by reputation
+        nearest = None
+        nearest_dist = float('inf')
+        for planet in planets:
+            d = (planet.position - player.position).length()
+            if d < nearest_dist:
+                nearest = planet
+                nearest_dist = d
+        base_fee = 500
+        faction_id = getattr(nearest, 'faction_id', 'terran_federation') if nearest else 'terran_federation'
+        rep = faction_system.player_reputation.get(faction_id, 0)
+        # Fee modifier: good rep cheaper, bad rep more expensive; deny if very hostile
+        if rep < -40:
+            print(f"🚫 Escort denied by {faction_id} due to poor reputation")
+            return
+        fee_modifier = 1.0
+        if rep > 30:
+            fee_modifier = 0.8
+        elif rep < -10:
+            fee_modifier = 1.3
+        escort_fee = int(base_fee * fee_modifier)
+        if player_wallet.can_afford(escort_fee):
+            player_wallet.spend(escort_fee)
+            print(f"🛰️ Escort requested from {faction_id}. Fee paid: {escort_fee} credits")
+            try:
+                for _ in range(2):
+                    pos = player.position + Vec3(random.uniform(-20, 20), 0, random.uniform(-20, 20))
+                    escort = MilitaryShip(faction_id, MilitaryShipType.ESCORT, pos, patrol_radius=150)
+                    escort.follow_player = True
+                    escort.patrol_center = pos
+                    # Auto-expire after some time
+                    escort._despawn_time = time.time() + 180  # 3 minutes
+                    military_manager.military_ships.append(escort)
+            except Exception:
+                pass
+        else:
+            print(f"💰 Not enough credits to request escort ({escort_fee})")
+    
+    # Map toggle
+    if key == 'tab' and not paused:
+        if map_ui.active:
+            map_ui.hide()
+        else:
+            map_ui.show()
+    
     if key == 't' and scene_manager.current_state == GameState.TOWN and not paused:
         # Open trading if near trading post
         if scene_manager.town_controller:
@@ -7201,6 +8819,19 @@ def input(key):
                 mission_ui.show()
             else:
                 print("You need to be closer to the mission board!")
+    
+    if key == 'b' and scene_manager.current_state == GameState.TOWN and not paused:
+        # Open manufacturing near shipyard (reuse shipyard position)
+        if scene_manager.town_controller:
+            player_pos = scene_manager.town_controller.position
+            shipyard_pos = getattr(scene_manager, 'shipyard_entity', None).position if getattr(scene_manager, 'shipyard_entity', None) else Vec3(-10, 3, 0)
+            distance = (player_pos - shipyard_pos).length()
+            if distance < 10:
+                ui_manager.hide_all()
+                if scene_manager.current_planet:
+                    manufacturing_ui.show(scene_manager.current_planet.name)
+            else:
+                print("You need to be closer to the shipyard to manage manufacturing!")
                 
     if key == 'k' and not paused:
         # Show available contracts (can be accessed anywhere)
@@ -7374,29 +9005,28 @@ def input(key):
             print("🔍 No treasure sites within excavation range.")
     
     if key == 'l' and not paused:
-        # Simulate boarding action (when encountering ships)
+        # Start boarding action (live)
         if scene_manager.current_state == GameState.SPACE:
-            print("\n⚔️ BOARDING ACTION SIMULATION")
-            print("1. Breach and Clear (High success, moderate damage)")
-            print("2. Stealth Infiltration (Moderate success, minimal damage)")
-            print("3. Negotiated Surrender (Low success, no damage)")
-            print("Press 1-3 to board, or any other key to cancel")
+            print("\n⚔️ BOARDING ACTION")
+            print("1. Breach and Clear (High success)")
+            print("2. Stealth Infiltration (Moderate success)")
+            print("3. Negotiated Surrender (Lower success)")
+            print("Press 1-3 to board now")
             
     if key in '123' and scene_manager.current_state == GameState.SPACE:
-        # Execute boarding action
-        boarding_actions = {
-            '1': BoardingAction.BREACH_AND_CLEAR,
-            '2': BoardingAction.STEALTH_INFILTRATION,
-            '3': BoardingAction.NEGOTIATED_SURRENDER
-        }
-        
+        # Execute boarding action with skill scaling
+        boarding_actions = {'1': BoardingAction.BREACH_AND_CLEAR, '2': BoardingAction.STEALTH_INFILTRATION, '3': BoardingAction.NEGOTIATED_SURRENDER}
         action = boarding_actions.get(key)
         if action:
-            result = enhanced_features.ship_boarding.initiate_boarding("Enemy Merchant", action)
-            if result['success']:
-                player_wallet.earn(result['cargo'])
+            try:
+                skill = enhanced_features.character_development.skills[PersonalSkill.COMBAT]
+            except Exception:
+                skill = 50
+            modifier = (skill - 50) / 200.0
+            result = enhanced_features.ship_boarding.initiate_boarding("Encountered Ship", action, modifier)
+            if result.get('success'):
+                player_wallet.earn(result.get('cargo', 0))
                 enhanced_features.character_development.gain_experience(PersonalSkill.COMBAT, 5)
-                
                 if result.get('ship'):
                     captured_ship = result['ship']
                     if enhanced_features.fleet_manager.add_ship(captured_ship):
