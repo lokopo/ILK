@@ -2582,6 +2582,13 @@ class DynamicContractSystem:
             return
         cargo_ship = max(viable, key=lambda cs: sum(cs.cargo.values()))
         cargo_value = sum(cargo_ship.cargo.values()) * 1000
+        # Scale reward by local threat at destination if known
+        try:
+            dest_name = getattr(cargo_ship.destination, 'name', None) or getattr(cargo_ship, 'destination_planet', None)
+            threat = physical_communication.estimate_planet_threat(dest_name) if dest_name else 'UNKNOWN'
+            threat_bonus = {'UNKNOWN': 1.0, 'LOW': 1.0, 'MEDIUM': 1.1, 'HIGH': 1.25, 'EXTREME': 1.5}.get(threat, 1.0)
+        except Exception:
+            threat_bonus = 1.0
         
         contract = Contract(
             contract_id=f"escort_{cargo_ship.ship_id}_{int(time.time())}",
@@ -2595,7 +2602,7 @@ class DynamicContractSystem:
                 "Ensure safe delivery"
             ],
             rewards={
-                'credits': int(cargo_value * 0.1),  # 10% of cargo value
+                'credits': int(cargo_value * 0.1 * threat_bonus),  # scale by threat
                 'reputation': {'merchant_guild': 10}
             },
             penalties={
@@ -7100,7 +7107,15 @@ class UnifiedTransportSystemManager:
         if 'military_manager' not in globals():
             return
         try:
-            for i in range(max(1, num_escorts)):
+            # Increase number of escorts for high-threat destination if known
+            try:
+                dest_name = getattr(cargo_ship.destination, 'name', None) or getattr(cargo_ship, 'destination_planet', None)
+                local_threat = physical_communication.estimate_planet_threat(dest_name) if dest_name else 'UNKNOWN'
+                threat_bonus = {'UNKNOWN': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1, 'EXTREME': 2}.get(local_threat, 0)
+            except Exception:
+                threat_bonus = 0
+            total = max(1, num_escorts + threat_bonus)
+            for i in range(total):
                 offset = Vec3(random.uniform(-15, 15), 0, random.uniform(-15, 15))
                 pos = cargo_ship.position + offset if hasattr(cargo_ship, 'position') else Vec3(0, 0, 0)
                 escort = MilitaryShip(faction_id, MilitaryShipType.ESCORT, pos, patrol_radius=120)
@@ -8377,22 +8392,25 @@ class MapUI:
                         lines.append(f" • {n.headline} ({reliability}, {age_h:.1f}h)")
         except Exception:
             pass
-        # Highlight destinations of active contracts
+        # Highlight destinations of active contracts only if known locally
         try:
             if dynamic_contracts.active_contracts:
                 lines.append("Active contract targets:")
                 for c in dynamic_contracts.active_contracts[:5]:
                     dest = c.metadata.get('dest') if c.metadata else None
                     if dest:
-                        lines.append(f" • {c.title} → {dest}")
-                        # Show suggested route steps
                         origin = getattr(scene_manager.current_planet, 'name', None)
-                        if not origin and planets:
-                            # approximate origin by nearest planet
-                            origin = min(planets, key=lambda p: (p.position - pos).length()).name
-                        route = find_route(origin, dest)
-                        if route:
-                            lines.append(f"    Route: {' -> '.join(route)}")
+                        knowledge = physical_communication.get_planet_knowledge(origin) if origin else {'news': []}
+                        knows_dest = any((dest in n.details) or (dest in n.headline) for n in knowledge.get('news', []))
+                        label = dest if knows_dest else "Unknown"
+                        lines.append(f" • {c.title} → {label}")
+                        # Show route only if known
+                        if knows_dest:
+                            if not origin and planets:
+                                origin = min(planets, key=lambda p: (p.position - pos).length()).name
+                            route = find_route(origin, dest)
+                            if route:
+                                lines.append(f"    Route: {' -> '.join(route)}")
         except Exception:
             pass
         # Threat: show local threat based on physically known news for nearest/current planet
