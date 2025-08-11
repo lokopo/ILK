@@ -4618,6 +4618,43 @@ def save_game():
                 'autopilot': getattr(player, 'autopilot', False)
             }
         }
+        # Persist physical communication state (mailboxes + news caches)
+        try:
+            game_state['planetary_mailboxes'] = {
+                planet: [
+                    {
+                        'letter_id': letter.letter_id,
+                        'message_type': letter.message_type.value,
+                        'sender_faction': letter.sender_faction,
+                        'sender_planet': letter.sender_planet,
+                        'recipient_faction': letter.recipient_faction,
+                        'recipient_planet': letter.recipient_planet,
+                        'subject': letter.subject,
+                        'content': letter.content,
+                        'timestamp': letter.timestamp,
+                        'urgency': letter.urgency.value,
+                        'requires_response': letter.requires_response
+                    } for letter in letters
+                ]
+                for planet, letters in physical_communication.planetary_mailboxes.items()
+            }
+            game_state['planetary_news'] = {
+                planet: [
+                    {
+                        'news_id': news.news_id,
+                        'headline': news.headline,
+                        'details': news.details,
+                        'source_planet': news.source_planet,
+                        'timestamp': news.timestamp,
+                        'reliability': news.reliability,
+                        'spread_count': news.spread_count
+                    } for news in news_list
+                ]
+                for planet, news_list in physical_communication.planetary_news.items()
+            }
+        except Exception:
+            pass
+
         # Persist faction heat
         try:
             game_state['faction_heat'] = faction_system.player_heat
@@ -4826,6 +4863,49 @@ def load_game():
             }
     except Exception:
         pass
+    # Restore physical communication state
+    try:
+        physical_communication.planetary_mailboxes.clear()
+        for planet, letters in game_state.get('planetary_mailboxes', {}).items():
+            restored = []
+            for l in letters:
+                try:
+                    restored.append(PhysicalLetter(
+                        letter_id=l['letter_id'],
+                        message_type=MessageType(l['message_type']),
+                        sender_faction=l.get('sender_faction',''),
+                        sender_planet=l.get('sender_planet',''),
+                        recipient_faction=l.get('recipient_faction',''),
+                        recipient_planet=l.get('recipient_planet',''),
+                        subject=l.get('subject',''),
+                        content=l.get('content',''),
+                        timestamp=l.get('timestamp', time.time()),
+                        urgency=UrgencyLevel(l.get('urgency','NORMAL')),
+                        requires_response=l.get('requires_response', False)
+                    ))
+                except Exception:
+                    continue
+            physical_communication.planetary_mailboxes[planet] = restored
+        physical_communication.planetary_news.clear()
+        for planet, news_list in game_state.get('planetary_news', {}).items():
+            restored_news = []
+            for n in news_list:
+                try:
+                    restored_news.append(PlanetaryNews(
+                        news_id=n['news_id'],
+                        headline=n['headline'],
+                        details=n['details'],
+                        source_planet=n['source_planet'],
+                        timestamp=n['timestamp'],
+                        reliability=n.get('reliability', 0.8),
+                        spread_count=n.get('spread_count', 0)
+                    ))
+                except Exception:
+                    continue
+            physical_communication.planetary_news[planet] = restored_news
+    except Exception:
+        pass
+
     # Restore faction heat
     try:
         if 'faction_heat' in game_state:
@@ -6485,11 +6565,30 @@ class EnhancedPlanetEconomy:
                 if notice == 'CARGO_LOST':
                     try:
                         contract_registry.mark_known(contract_id, 'origin')
+                        # Add local news entry for accountability
+                        if hasattr(self, 'planet_name'):
+                            physical_communication.add_planetary_news(
+                                planet_name=self.planet_name,
+                                headline="Cargo Lost In Transit",
+                                details=f"Contract {contract_id} cargo failed to arrive.",
+                                source=getattr(self.planet_object, 'name', self.planet_name),
+                                reliability=0.9
+                            )
                     except Exception:
                         pass
-                elif notice in ('PAYMENT_OVERDUE', 'PAYMENT_LOST'):
+                elif notice in ('PAYMENT_OVERDUE', 'PAYMENT_LOST', 'PAYMENT_DELIVERED'):
                     try:
+                        # Payment-related notices are primarily for the destination/buyer
                         contract_registry.mark_known(contract_id, 'dest')
+                        if hasattr(self, 'planet_name'):
+                            headline = "Payment Overdue" if notice == 'PAYMENT_OVERDUE' else ("Payment Lost" if notice == 'PAYMENT_LOST' else "Payment Delivered")
+                            physical_communication.add_planetary_news(
+                                planet_name=self.planet_name,
+                                headline=headline,
+                                details=f"Contract {contract_id}: {headline}.",
+                                source=getattr(self.planet_object, 'name', self.planet_name),
+                                reliability=0.9
+                            )
                     except Exception:
                         pass
     
@@ -7067,6 +7166,13 @@ class TransportContractRegistry:
             else:
                 data['status'] = 'payment_lost_uninsured'
                 print(f"❌ Payment lost with no insurance for contract {contract_id}")
+            # Physically inform destination that payment is lost
+            try:
+                payload = {'kind': 'CONTRACT_NOTICE', 'contract_id': contract_id, 'notice': 'PAYMENT_LOST'}
+                msg = MessageShip(data['origin'], data['dest'], MessageType.NEWS_BULLETIN, payload)
+                unified_transport_system.message_ships.append(msg)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -8143,6 +8249,24 @@ class MapUI:
         # Lanes summary
         lanes = max(0, unified_transport_system.count_active_routes())
         lines.append(f"\nActive trade lanes: {lanes}")
+        # Local planetary news: show most recent items from nearby/current planet
+        try:
+            if scene_manager.current_planet:
+                pname = scene_manager.current_planet.name
+            else:
+                # nearest planet by distance
+                pname = min(planets, key=lambda p: (p.position - pos).length()).name if planets else None
+            if pname:
+                knowledge = physical_communication.get_planet_knowledge(pname)
+                recent_news = knowledge.get('news', [])[-3:]
+                if recent_news:
+                    lines.append(f"\nNews at {pname}:")
+                    for n in recent_news:
+                        age_h = (time.time() - n.timestamp) / 3600
+                        reliability = f"{n.reliability:.0%}"
+                        lines.append(f" • {n.headline} ({reliability}, {age_h:.1f}h)")
+        except Exception:
+            pass
         # Highlight destinations of active contracts
         try:
             if dynamic_contracts.active_contracts:
