@@ -4123,8 +4123,84 @@ pause_text = Text(
     text='PAUSED\nESC to Resume',
     origin=(0, 0),
     scale=2,
-    position=(0, 0.3)
+    position=(0, 0.35)
 )
+
+# Settings section for time scale control
+settings_title = Text(
+    parent=pause_panel,
+    text='Settings',
+    position=(-0.35, 0.18),
+    scale=1.2,
+    color=color.cyan
+)
+settings_daylen_label = Text(
+    parent=pause_panel,
+    text=f'Day length (s): {int(time_system.day_length)}',
+    position=(-0.35, 0.12),
+    scale=0.9,
+    color=color.white
+)
+# Buttons to adjust day length
+btn_slower = Button(
+    parent=pause_panel,
+    text='Slower [-]',
+    scale=(0.18, 0.07),
+    position=(-0.35, 0.05),
+    enabled=False
+)
+btn_faster = Button(
+    parent=pause_panel,
+    text='Faster []]',
+    scale=(0.18, 0.07),
+    position=(-0.12, 0.05),
+    enabled=False
+)
+btn_reset_speed = Button(
+    parent=pause_panel,
+    text='Reset [\\]',
+    scale=(0.18, 0.07),
+    position=(0.11, 0.05),
+    enabled=False
+)
+
+# Apply and Close buttons share row with save/load
+apply_button = Button(
+    parent=pause_panel,
+    text='Apply',
+    color=color.azure.tint(-.2),
+    highlight_color=color.azure.tint(-.1),
+    pressed_color=color.azure.tint(-.3),
+    scale=(0.18, 0.07),
+    position=(0.34, 0.05),
+    enabled=False
+)
+
+# Wire button behavior
+try:
+    def _apply_speed():
+        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
+        # HUD will reflect speed label automatically in update loop
+        print(f'⏱️ Applied speed: {time_system.get_speed_label()}')
+    
+    def _slower():
+        time_system.decrease_speed()
+        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
+    
+    def _faster():
+        time_system.increase_speed()
+        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
+    
+    def _reset():
+        time_system.set_day_length(300)
+        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
+    
+    btn_slower.on_click = _slower
+    btn_faster.on_click = _faster
+    btn_reset_speed.on_click = _reset
+    apply_button.on_click = _apply_speed
+except Exception:
+    pass
 
 # Add Save Game button
 save_button = Button(
@@ -7650,6 +7726,13 @@ combat_system = CombatSystem()
 faction_system = FactionSystem()
 crew_system = CrewSystem()
 time_system = TimeSystem()
+# Optional: initialize from environment variable GAME_DAY_LENGTH
+try:
+    _env_day_length = float(os.environ.get('GAME_DAY_LENGTH', '')) if os.environ.get('GAME_DAY_LENGTH') else None
+except Exception:
+    _env_day_length = None
+if _env_day_length and _env_day_length > 0:
+    time_system.set_day_length(_env_day_length)
 mission_system = MissionSystem()
 
 # Initialize enhanced economies after planets are created
@@ -9394,6 +9477,12 @@ def input(key):
         save_button.enabled = paused
         load_button.enabled = paused
         quit_button.enabled = paused
+        # Enable/disable settings controls together with pause panel
+        try:
+            for w in (settings_title, settings_daylen_label, btn_slower, btn_faster, btn_reset_speed, apply_button):
+                w.enabled = paused
+        except Exception:
+            pass
         
         if scene_manager.current_state == GameState.SPACE:
             player.enabled = not paused
