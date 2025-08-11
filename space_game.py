@@ -2581,6 +2581,15 @@ class DynamicContractSystem:
         if not viable:
             return
         cargo_ship = max(viable, key=lambda cs: sum(cs.cargo.values()))
+        # Ensure ship_id exists for contract id
+        try:
+            if not hasattr(cargo_ship, 'ship_id') or not cargo_ship.ship_id:
+                if not hasattr(TransportShip, '_id_counter'):
+                    TransportShip._id_counter = 0
+                TransportShip._id_counter += 1
+                cargo_ship.ship_id = f"CARGO-{int(time.time()*1000)}-{TransportShip._id_counter}"
+        except Exception:
+            cargo_ship.ship_id = f"CARGO-{int(time.time()*1000)}"
         cargo_value = sum(cargo_ship.cargo.values()) * 1000
         # Scale reward by local threat at destination if known
         try:
@@ -4606,6 +4615,10 @@ def save_game():
                         'daily_production': getattr(p.enhanced_economy, 'daily_production', {}),
                         'credits': getattr(p.enhanced_economy, 'credits', 0),
                         'recent_attacks': getattr(p.enhanced_economy, 'recent_attacks', 0),
+                        'minerals_reserve': getattr(p.enhanced_economy, 'minerals_reserve', 0),
+                        'fuel_reserve': getattr(p.enhanced_economy, 'fuel_reserve', 0),
+                        'energy_infrastructure': getattr(p.enhanced_economy, 'energy_infrastructure', 1.0),
+                        'fertility': getattr(p.enhanced_economy, 'fertility', 1.0),
                     }
                     if hasattr(p, 'enhanced_economy') and p.enhanced_economy else None
                 )
@@ -4819,11 +4832,11 @@ def save_game():
         print('Game autosaved (slot 1).')
     except Exception:
         # Fallback timestamped save
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f'saves/save_{timestamp}.json'
-    with open(filename, 'w') as f:
-        json.dump(game_state, f)
-    print(f'Game saved to {filename}')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'saves/save_{timestamp}.json'
+        with open(filename, 'w') as f:
+            json.dump(game_state, f)
+        print(f'Game saved to {filename}')
 
 def load_game():
     if not os.path.exists('saves'):
@@ -4890,14 +4903,18 @@ def load_game():
                     p.enhanced_economy.daily_production = econ_data.get('daily_production', {}).copy()
                     p.enhanced_economy.credits = econ_data.get('credits', p.enhanced_economy.credits)
                     p.enhanced_economy.recent_attacks = econ_data.get('recent_attacks', 0)
+                    p.enhanced_economy.minerals_reserve = float(econ_data.get('minerals_reserve', p.enhanced_economy.minerals_reserve))
+                    p.enhanced_economy.fuel_reserve = float(econ_data.get('fuel_reserve', p.enhanced_economy.fuel_reserve))
+                    p.enhanced_economy.energy_infrastructure = float(econ_data.get('energy_infrastructure', p.enhanced_economy.energy_infrastructure))
+                    p.enhanced_economy.fertility = float(econ_data.get('fertility', p.enhanced_economy.fertility))
         # Update global mapping
         globals()['enhanced_planet_economies'] = {p.name: p.enhanced_economy for p in planets if hasattr(p, 'enhanced_economy') and p.enhanced_economy}
     else:
         # Backward compatibility
         for p_data in game_state.get('planets', []):
-        planet = Planet(position=Vec3(p_data[0], p_data[1], p_data[2]))
-        planet.scale = p_data[3]
-        planets.append(planet)
+            planet = Planet(position=Vec3(p_data[0], p_data[1], p_data[2]))
+            planet.scale = p_data[3]
+            planets.append(planet)
     
     # Restore contract registry (best-effort)
     try:
@@ -5302,13 +5319,20 @@ class TransportShip(Entity):
         # Procedural ship geometry (basic kitbash): hull + nacelles + cargo pods
         super().__init__(position=start_pos, **kwargs)
         self.model = None
-        hull = Entity(parent=self, model='capsule', scale=(0.6, 0.6, 2.2), color=color.light_gray)
+        # Use a widely available model to avoid missing-asset black screens
+        hull = Entity(parent=self, model='cube', scale=(0.6, 0.6, 2.2), color=color.light_gray)
         # Side nacelles
         Entity(parent=self, model='cube', scale=(0.2, 0.2, 0.8), position=(0.6, 0, -0.3), color=color.gray)
         Entity(parent=self, model='cube', scale=(0.2, 0.2, 0.8), position=(-0.6, 0, -0.3), color=color.gray)
         # Cargo pods for cargo ships
         if getattr(self, 'ship_type', '') in ("CARGO", "PAYMENT"):
             Entity(parent=self, model='cube', scale=(0.5, 0.5, 0.5), position=(0.0, -0.5, -0.2), color=color.orange if self.ship_type=="CARGO" else color.yellow)
+        
+        # Unique identifier for contracts/intel
+        if not hasattr(TransportShip, '_id_counter'):
+            TransportShip._id_counter = 0
+        TransportShip._id_counter += 1
+        self.ship_id = f"{ship_type}-{int(time.time()*1000)}-{TransportShip._id_counter}"
         
         self.origin = origin_planet
         self.destination = destination_planet
@@ -5412,12 +5436,12 @@ class TransportShip(Entity):
         if hasattr(scene_manager, 'space_controller') and scene_manager.space_controller:
             # Guard against empty/destroyed nodepaths
             try:
-            player_pos = scene_manager.space_controller.position
+                player_pos = scene_manager.space_controller.position
                 _ = self.position  # access to ensure node exists
             except Exception:
                 return
             try:
-            distance = (self.position - player_pos).length()
+                distance = (self.position - player_pos).length()
             except Exception:
                 return
             if distance < 30 and not self.encounter_triggered:
@@ -5641,7 +5665,7 @@ class PaymentShip(TransportShip):
         """Deliver payment"""
         if hasattr(self.destination, 'enhanced_economy') and self.destination.enhanced_economy:
             self.destination.enhanced_economy.credits += self.credits
-        
+            
         print(f"💳 Payment delivered to {getattr(self.destination, 'name', 'Unknown')}: {self.credits} credits")
         # Notify contract completion and physically propagate receipts
         if hasattr(self, 'contract_id'):
@@ -6408,6 +6432,11 @@ class EnhancedPlanetEconomy:
         self.outgoing_requests = {}
         self.expected_deliveries = {}
         self.credits = random.randint(10000, 50000)
+        # Realistic constraints
+        self.minerals_reserve = random.randint(200_000, 800_000)
+        self.fuel_reserve = random.randint(100_000, 400_000)
+        self.energy_infrastructure = random.uniform(0.8, 1.2)  # scales energy from solar/grid
+        self.fertility = 1.0  # affects food yields (0.6..1.2)
         
         # Transport timing
         self.last_procurement_check = 0
@@ -6462,21 +6491,148 @@ class EnhancedPlanetEconomy:
         for commodity in ["food", "minerals", "technology", "luxury_goods", "medicine", "weapons", "fuel", "spices"]:
             if commodity not in self.stockpiles:
                 self.stockpiles[commodity] = 0
+        # Adjust reserves and infrastructure by planet type
+        if self.planet_type == "agricultural":
+            self.energy_infrastructure *= 0.9
+            self.minerals_reserve = int(self.minerals_reserve * 0.6)
+        elif self.planet_type == "industrial":
+            self.energy_infrastructure *= 1.2
+        elif self.planet_type == "mining":
+            self.minerals_reserve = int(self.minerals_reserve * 1.5)
+            self.fuel_reserve = int(self.fuel_reserve * 1.3)
+        elif self.planet_type == "tech":
+            self.energy_infrastructure *= 1.1
                 
     def update(self):
         """Update economy and handle transport needs"""
         current_time = time.time()
         
-        # Process production and consumption
-        for commodity, amount in self.daily_production.items():
-            per_second = amount / 300.0  # 1 game day = 5 minutes = 300 seconds
-            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0) + (per_second * time.dt)
-            
+        # Recipe-based production with energy and reserve limits
+        # Energy budget per second
+        day_seconds = 300.0  # 1 game day = 5 minutes
+        base_solar_per_day = (self.planet_object.population / 20000.0) if hasattr(self.planet_object, 'population') else 50.0
+        base_solar_per_day *= self.energy_infrastructure
+        base_solar = base_solar_per_day / day_seconds
+        max_burn_per_day = max(1.0, (self.planet_object.population / 50000.0) if hasattr(self.planet_object, 'population') else 1.0)
+        burn_request = (max_burn_per_day / day_seconds) * time.dt
+        actual_burn = min(burn_request, self.stockpiles.get('fuel', 0))
+        # convert burned fuel to energy (yield factor 5)
+        energy = (base_solar * time.dt) + (actual_burn * 5.0)
+        self.stockpiles['fuel'] = self.stockpiles.get('fuel', 0) - actual_burn
+        if getattr(self.planet_object, 'blockaded', False):
+            energy *= 0.7
+
+        recipes = {
+            'minerals': {'inputs': {}, 'energy': 1.0},
+            'fuel': {'inputs': {}, 'energy': 1.0},
+            'technology': {'inputs': {'minerals': 1.0}, 'energy': 2.0},
+            'weapons': {'inputs': {'technology': 1.0}, 'energy': 3.0},
+            'medicine': {'inputs': {'food': 1.0, 'technology': 0.5}, 'energy': 1.0},
+            'luxury_goods': {'inputs': {'technology': 0.5, 'spices': 0.5}, 'energy': 2.0},
+            'spices': {'inputs': {}, 'energy': 1.0},
+            'food': {'inputs': {}, 'energy': 1.0},
+        }
+
+        target_buffer_days = 60.0
+
+        def produce(commodity, desired_units):
+            nonlocal energy
+            if desired_units <= 0:
+                return 0.0
+            if commodity in ('minerals', 'fuel'):
+                # extraction limited by reserve and energy
+                reserve = self.minerals_reserve if commodity == 'minerals' else self.fuel_reserve
+                if reserve <= 0:
+                    return 0.0
+                extract_cap_per_day = max(1.0, ((reserve / 1000.0) ** 0.5) * 40.0)
+                extract_cap = (extract_cap_per_day / day_seconds) * time.dt
+                units_by_energy = energy / max(0.0001, recipes[commodity]['energy'])
+                units = min(desired_units, extract_cap, units_by_energy)
+                if units <= 0:
+                    return 0.0
+                energy -= units * recipes[commodity]['energy']
+                if commodity == 'minerals':
+                    self.minerals_reserve = max(0.0, self.minerals_reserve - units)
+                else:
+                    self.fuel_reserve = max(0.0, self.fuel_reserve - units)
+                self.stockpiles[commodity] = self.stockpiles.get(commodity, 0.0) + units
+                return units
+            # non-extraction
+            recipe = recipes.get(commodity, {'inputs': {}, 'energy': 0.0})
+            max_by_energy = energy / max(0.0001, recipe['energy'])
+            units = min(desired_units, max_by_energy)
+            if units <= 0:
+                return 0.0
+            # limit by inputs
+            for inp, req in recipe['inputs'].items():
+                avail = self.stockpiles.get(inp, 0.0)
+                if req > 0:
+                    units = min(units, avail / req)
+                if units <= 0:
+                    return 0.0
+            # days-of-supply throttle
+            daily_need = float(self.daily_consumption.get(commodity, 0.0))
+            if daily_need > 0:
+                desired_stock = daily_need * target_buffer_days
+                current = self.stockpiles.get(commodity, 0.0)
+                if current >= desired_stock * 2.0:
+                    units = 0.0
+                elif current > desired_stock:
+                    surplus_ratio = (current - desired_stock) / max(1.0, desired_stock)
+                    units = units * max(0.2, 1.0 - 0.8 * surplus_ratio)
+            if commodity == 'food':
+                units = units * max(0.6, min(1.2, self.fertility))
+            if units <= 0:
+                return 0.0
+            # consume inputs and energy
+            for inp, req in recipe['inputs'].items():
+                self.stockpiles[inp] = self.stockpiles.get(inp, 0.0) - (req * units)
+            energy -= units * recipe['energy']
+            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0.0) + units
+            # adjust fertility gently
+            if commodity == 'food':
+                baseline = float(self.daily_consumption.get('food', 1.0)) * 2.0 / day_seconds * time.dt
+                if units > baseline:
+                    self.fertility = max(0.6, self.fertility - 0.0005)
+                else:
+                    self.fertility = min(1.2, self.fertility + 0.00025)
+            return units
+
+        # Execute production according to daily production targets (per-second fraction)
+        order = ['minerals', 'fuel', 'technology', 'weapons', 'medicine', 'luxury_goods', 'spices', 'food']
+        for commodity in order:
+            daily_target = float(self.daily_production.get(commodity, 0.0))
+            desired = (daily_target / day_seconds) * time.dt
+            if getattr(self.planet_object, 'blockaded', False):
+                desired *= 0.7
+            produce(commodity, desired)
+
+        # Consumption per second, capped by available stock
         for commodity, amount in self.daily_consumption.items():
-            per_second = amount / 300.0
-            current_stock = self.stockpiles.get(commodity, 0)
+            per_second = float(amount) / day_seconds
+            current_stock = self.stockpiles.get(commodity, 0.0)
             consumption = min(per_second * time.dt, current_stock)
             self.stockpiles[commodity] = current_stock - consumption
+        # Perishables decay beyond 60-day buffer (approx per-tick)
+        for perishable in ('food', 'medicine', 'spices'):
+            if perishable in self.stockpiles:
+                buffer = float(self.daily_consumption.get(perishable, 1.0)) * 60.0
+                current = self.stockpiles.get(perishable, 0.0)
+                if current > buffer:
+                    # ~2% per day beyond buffer
+                    decay_per_day = 0.02
+                    decay = (current - buffer) * decay_per_day * (time.dt / day_seconds)
+                    self.stockpiles[perishable] = max(0.0, current - decay)
+        # Storage pressure: operational losses when over 90-day buffer
+        for commodity, current in list(self.stockpiles.items()):
+            daily_need = float(self.daily_consumption.get(commodity, 0.0))
+            if daily_need <= 0:
+                continue
+            buffer90 = daily_need * 90.0
+            if current > buffer90:
+                loss_per_day = 0.02  # 2% per day beyond buffer
+                loss = (current - buffer90) * loss_per_day * (time.dt / day_seconds)
+                self.stockpiles[commodity] = max(0.0, self.stockpiles[commodity] - loss)
             
         # Check for procurement needs
         if current_time - self.last_procurement_check > self.procurement_interval:
@@ -6600,8 +6756,40 @@ class EnhancedPlanetEconomy:
             UrgencyLevel.URGENT: 1.5,
             UrgencyLevel.CRITICAL: 2.0
         }
-        
-        return base_price * urgency_multipliers[urgency]
+        # Storage pressure lowers willingness to pay (push surplus out)
+        current = float(self.stockpiles.get(commodity, 0.0))
+        daily_need = float(self.daily_consumption.get(commodity, 0.0))
+        storage_factor = 1.0
+        if daily_need > 0.0:
+            days_supply = current / daily_need
+            if days_supply > 120.0:  # massive surplus
+                storage_factor = 0.7
+            elif days_supply > 90.0:
+                storage_factor = 0.85
+        # Shortage pressure increases willingness to pay
+        shortage_factor = 1.0
+        if daily_need > 0.0:
+            days_supply = current / daily_need
+            if days_supply < 7.0:
+                shortage_factor = 1.6
+            elif days_supply < 15.0:
+                shortage_factor = 1.3
+        # Energy scarcity premium: if energy is low, pay more for fuel and tech
+        energy_premium = 1.0
+        try:
+            # Estimate if we run out of energy without burning fuel
+            base_solar_per_day = (self.planet_object.population / 20000.0) if hasattr(self.planet_object, 'population') else 50.0
+            base_solar_per_day *= self.energy_infrastructure
+            base_solar = base_solar_per_day
+            tech_need = float(self.daily_consumption.get('technology', 0.0))
+            fuel_need = float(self.daily_consumption.get('fuel', 0.0))
+            # If tech/fuel needs exceed what solar covers, push premiums
+            if base_solar < (tech_need * 2.0):
+                if commodity in ('fuel', 'technology'):
+                    energy_premium = 1.2
+        except Exception:
+            pass
+        return base_price * urgency_multipliers[urgency] * storage_factor * shortage_factor * energy_premium
     
     def send_procurement_message(self, request):
         """Send procurement message to suppliers"""
@@ -7033,8 +7221,8 @@ class UnifiedTransportSystemManager:
                     if hasattr(ship, 'update'):
                         ship.update()
             else:
-            if hasattr(ship, 'update'):
-                ship.update()
+                if hasattr(ship, 'update'):
+                    ship.update()
                 
             # Remove delivered ships
             if hasattr(ship, 'delivered') and ship.delivered:
@@ -7554,6 +7742,187 @@ class UIManager:
 
 ui_manager = UIManager()
 
+# ===== UI DEBUG: TEMPORARY UUID LABELS =====
+# Define before any UI classes reference it
+try:
+    debug_show_ui_uuids
+except NameError:
+    debug_show_ui_uuids = True
+
+def _assign_uuid_label(entity):
+    if getattr(entity, '_uuid_labeled', False):
+        return
+    try:
+        import random, time
+        uid = f"{int(time.time()*1000)%100000}-{random.randint(100,999)}"
+        entity._ui_uuid = uid
+        # Place a small cyan tag in the top-left of the element's local space
+        try:
+            tag = Text(parent=entity, text=f"#{uid}", position=(-0.48, 0.45), scale=0.5, color=color.cyan)
+            entity._uuid_label = tag
+        except Exception:
+            pass
+        entity._uuid_labeled = True
+    except Exception:
+        pass
+
+def annotate_ui_tree(root):
+    try:
+        for child in getattr(root, 'children', []) or []:
+            _assign_uuid_label(child)
+            annotate_ui_tree(child)
+    except Exception:
+        pass
+
+def set_ui_uuid_labels_visible(visible: bool):
+    try:
+        for child in getattr(camera.ui, 'children', []) or []:
+            _toggle_uuid_label(child, visible)
+    except Exception:
+        pass
+
+# ===== STRUCTURED DIAGNOSTICS =====
+import os
+import json
+import traceback
+import re
+from logging.handlers import RotatingFileHandler
+
+class Diagnostics:
+    def __init__(self, log_dir: str = 'logs', file_name: str = 'game.log', max_bytes: int = 512_000, backup_count: int = 3):
+        self.counters = {}
+        self.last_flush = time.time()
+        self.flush_interval = 10.0
+        self.log_dir = log_dir
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.log_path = os.path.join(self.log_dir, file_name)
+        self._fh = open(self.log_path, 'a', buffering=1)
+        self._max_bytes = max_bytes
+        self._backup_count = backup_count
+        self._patterns = [
+            ('missing_glyph', re.compile(r":text\(warning\): No definition")),
+            ('missing_model', re.compile(r"warning: missing model")),
+            ('prc_warning', re.compile(r":prc\(warning\):")),
+        ]
+
+    def _rotate_if_needed(self):
+        try:
+            if self._fh.tell() > self._max_bytes:
+                self._fh.close()
+                # rotate
+                for i in range(self._backup_count - 1, 0, -1):
+                    src = f"{self.log_path}.{i}"
+                    dst = f"{self.log_path}.{i+1}"
+                    if os.path.exists(src):
+                        try:
+                            os.replace(src, dst)
+                        except Exception:
+                            pass
+                try:
+                    os.replace(self.log_path, f"{self.log_path}.1")
+                except Exception:
+                    pass
+                self._fh = open(self.log_path, 'a', buffering=1)
+        except Exception:
+            pass
+
+    def log_event(self, category: str, severity: str, message: str = '', extra: dict | None = None):
+        ts = time.time()
+        self.counters[category] = self.counters.get(category, 0) + 1
+        record = {
+            'ts': ts,
+            'severity': severity,
+            'category': category,
+            'message': message,
+            'extra': extra or {}
+        }
+        try:
+            self._fh.write(json.dumps(record) + "\n")
+            self._rotate_if_needed()
+        except Exception:
+            pass
+
+    def log_exception(self, context: str, err: Exception):
+        tb = ''.join(traceback.format_exception(type(err), err, err.__traceback__))
+        self.log_event(f"exception.{context}", 'ERROR', str(err), {'traceback': tb})
+
+    def scan_console_line(self, line: str):
+        try:
+            for name, pattern in self._patterns:
+                if pattern.search(line):
+                    self.counters[name] = self.counters.get(name, 0) + 1
+        except Exception:
+            pass
+
+diagnostics = Diagnostics()
+
+class _ConsoleTee:
+    def __init__(self, wrapped, aggregator: Diagnostics):
+        self._wrapped = wrapped
+        self._agg = aggregator
+
+    def write(self, data):
+        try:
+            if isinstance(data, bytes):
+                text = data.decode(errors='ignore')
+            else:
+                text = str(data)
+            for line in text.splitlines():
+                self._agg.scan_console_line(line)
+        except Exception:
+            pass
+        try:
+            return self._wrapped.write(data)
+        except Exception:
+            return 0
+
+    def flush(self):
+        try:
+            return self._wrapped.flush()
+        except Exception:
+            return None
+
+# Attach tees to capture common warnings
+try:
+    import sys as _sys
+    _sys.stdout = _ConsoleTee(_sys.stdout, diagnostics)
+    _sys.stderr = _ConsoleTee(_sys.stderr, diagnostics)
+except Exception:
+    pass
+
+class DiagnosticsUI:
+    def __init__(self):
+        self.active = False
+        self.panel = Panel(parent=camera.ui, model='quad', scale=(0.7, 0.6), color=color.black66, enabled=False)
+        self.title = Text(parent=self.panel, text='Diagnostics', position=(0, 0.26), scale=1.4, color=color.azure)
+        self.body = Text(parent=self.panel, text='', position=(-0.32, 0.18), scale=0.8, color=color.white)
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
+
+    def show(self):
+        ui_manager.show(self)
+        self.refresh()
+
+    def hide(self):
+        ui_manager.hide(self)
+
+    def refresh(self):
+        # Show top counters sorted by count
+        items = sorted(diagnostics.counters.items(), key=lambda kv: kv[1], reverse=True)
+        lines = []
+        for name, count in items[:20]:
+            lines.append(f"{name}: {count}")
+        self.body.text = "\n".join(lines) if lines else "No diagnostics yet."
+
+def _toggle_uuid_label(entity, visible: bool):
+    try:
+        if hasattr(entity, '_uuid_label'):
+            entity._uuid_label.enabled = visible
+        for child in getattr(entity, 'children', []) or []:
+            _toggle_uuid_label(child, visible)
+    except Exception:
+        pass
+
 # Trading UI
 class TradingUI:
     def __init__(self):
@@ -7568,6 +7937,8 @@ class TradingUI:
             color=color.black66,
             enabled=False
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
         
         # Title
         self.title = Text(
@@ -7643,6 +8014,8 @@ class TradingUI:
     def show(self, planet_name):
         self.current_planet = planet_name
         ui_manager.show(self)
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
         # Enable refuel panel if station is present
         try:
             planet_obj = next((p for p in planets if getattr(p, 'name', None) == planet_name), None)
@@ -7698,7 +8071,7 @@ class TradingUI:
             self.knowledge_text.text = "\n".join(news_lines)
         except Exception:
             self.knowledge_text.text = ''
-
+        
         # Update commodity list with realistic supply data
         commodity_text = "COMMODITIES:\n\n"
         commodities = list(market_system.commodities.keys())
@@ -7873,6 +8246,8 @@ class UpgradeUI:
             color=color.black66,
             enabled=False
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
         
         # Title
         self.title = Text(
@@ -7913,6 +8288,8 @@ class UpgradeUI:
     def show(self):
         ui_manager.show(self)
         self.update_display()
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
         
     def hide(self):
         ui_manager.hide(self)
@@ -8127,6 +8504,10 @@ class FactionUI:
             color=color.black66,
             enabled=False
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
         
         # Title
         self.title = Text(
@@ -8158,6 +8539,10 @@ class FactionUI:
     def show(self):
         ui_manager.show(self)
         self.update_display()
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
         
     def hide(self):
         ui_manager.hide(self)
@@ -8194,6 +8579,8 @@ class CrewUI:
             color=color.black66,
             enabled=False
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
         
         # Title
         self.title = Text(
@@ -8246,6 +8633,8 @@ class CrewUI:
     def show(self):
         ui_manager.show(self)
         self.update_display()
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
         
     def hide(self):
         ui_manager.hide(self)
@@ -8361,6 +8750,66 @@ class MissionUI:
             scale=1,
             color=color.light_gray
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
+    def show(self):
+        ui_manager.show(self)
+        self.update_display()
+        
+    def hide(self):
+        ui_manager.hide(self)
+        
+    def update_display(self):
+        # Build available and active mission text from dynamic contracts
+        lines = []
+        self._available_index_to_id.clear()
+        try:
+            lines.append("AVAILABLE CONTRACTS:\n")
+            for i, c in enumerate(dynamic_contracts.available_contracts[:5], start=1):
+                self._available_index_to_id[i] = c.contract_id
+                dest = c.metadata.get('dest') if c.metadata else ''
+                lines.append(f"{i}. {c.title} → {dest}\n")
+            lines.append("\nACTIVE CONTRACTS:\n")
+            active = dynamic_contracts.active_contracts
+            for c in active:
+                remaining = int(max(0, c.metadata.get('time_remaining', 0))) if c.metadata else 0
+                reward = c.rewards.get('credits', 0) if isinstance(c.rewards, dict) else 0
+                lines.append(f"• {c.title} | Reward: {reward} cr | Time left: {remaining}m\n")
+        except Exception:
+            pass
+        self.mission_list.text = "".join(lines) if lines else "No contracts available."
+
+    def handle_input(self, key: str):
+        if not self.active:
+            return False
+        # Close on ESC
+        if key == 'escape':
+            self.hide()
+            return True
+        # Accept missions 1..5
+        try:
+            if key in ('1','2','3','4','5'):
+                idx = int(key)
+                cid = self._available_index_to_id.get(idx)
+                if cid:
+                    try:
+                        dynamic_contracts.accept_contract(cid)
+                    except Exception:
+                        pass
+                    self.update_display()
+                    return True
+        except Exception:
+            pass
+        # Abandon the first active contract
+        if key in ('a','A'):
+            try:
+                if dynamic_contracts.active_contracts:
+                    dynamic_contracts.abandon_contract(dynamic_contracts.active_contracts[0].contract_id)
+                    self.update_display()
+                    return True
+            except Exception:
+                pass
+        return False
         
 # ===== MAP UI =====
 class MapUI:
@@ -8569,17 +9018,17 @@ class MapUI:
                         knowledge = physical_communication.get_planet_knowledge(current_planet_name)
                         knows = any((dest in n.details) or (dest in n.headline) for n in knowledge.get('news', []))
                         if not knows:
-                    print(f"ℹ️ Destination {dest} is unknown here. Visit planets to learn more or wait for news.")
-                    try:
-                        tips_hud.show_tip(f"Destination {dest} unknown. Land on nearby worlds to gather intel.")
-                    except Exception:
-                        pass
+                            print(f"ℹ️ Destination {dest} is unknown here. Visit planets to learn more or wait for news.")
+                            try:
+                                tips_hud.show_tip(f"Destination {dest} unknown. Land on nearby worlds to gather intel.")
+                            except Exception:
+                                pass
                             return True
                 except Exception:
                     pass
                 if dynamic_contracts.accept_contract(cid):
-        self.update_display()
-                return True
+                    self.update_display()
+                    return True
         if key.lower() == 'a':
             # Abandon first active contract for simplicity
             if dynamic_contracts.active_contracts:
@@ -8626,6 +9075,10 @@ manufacturing_ui = ManufacturingUI()
 ui_manager.register(manufacturing_ui)
 map_ui = MapUI()
 ui_manager.register(map_ui)
+
+# Diagnostics UI
+diagnostics_ui = DiagnosticsUI()
+ui_manager.register(diagnostics_ui)
 
 # Lightweight tips HUD
 class TipsHUD:
@@ -8682,12 +9135,12 @@ def update():
                 landing_prompt.enabled = True
                 land_button.enabled = True
                 cancel_button.enabled = True
-                    # Freeze player; let UI manager show cursor
+                # Freeze player; let UI manager show cursor
                 player.enabled = False
-                    globals()['nearby_planet'] = nearest_planet
-                    globals()['landing_prompt_active'] = True
-                    if 'ui_manager' in globals():
-                        ui_manager.update_cursor()
+                globals()['nearby_planet'] = nearest_planet
+                globals()['landing_prompt_active'] = True
+                if 'ui_manager' in globals():
+                    ui_manager.update_cursor()
 
             # Random events only when not near planets and no landing prompt
             if (nearest_planet is None or nearest_dist > landing_hide_threshold) and not landing_prompt.enabled:
@@ -8913,9 +9366,13 @@ land_button.on_click = land_on_planet
 cancel_button.on_click = cancel_landing
 ui_manager.register(type('LandingWrapper', (), {'active': False, 'panel': landing_prompt}))
 
-# Lighting
+# Lighting and background to avoid black screen
 DirectionalLight(y=2, z=3, rotation=(45, -45, 45))
-AmbientLight(color=Vec4(0.1, 0.1, 0.1, 1))  # Darker ambient light
+AmbientLight(color=Vec4(0.2, 0.2, 0.25, 1))  # Slightly brighter ambient
+try:
+    sky = Entity(model='sphere', scale=1000, double_sided=True, color=color.black)
+except Exception:
+    pass
 
 # Initialize scene manager after all entities are created
 scene_manager.initialize_space()
@@ -8936,8 +9393,18 @@ def input(key):
         return
     if crew_ui.handle_input(key):
         return
-    if mission_ui.handle_input(key):
+    if hasattr(mission_ui, 'handle_input') and mission_ui.handle_input(key):
         return
+    # Diagnostics UI toggle
+    try:
+        if key == 'f9':
+            if diagnostics_ui.active:
+                diagnostics_ui.hide()
+            else:
+                diagnostics_ui.show()
+            return
+    except Exception as e:
+        diagnostics.log_exception('input.toggle_diagnostics', e)
     
     if key == 'escape':
         # Close UIs if open

@@ -225,7 +225,12 @@ class CapturedShip:
     def get_effective_stats(self):
         base = self.stats
         condition_mod = self.condition
-        crew_mod = min(1.2, len(self.assigned_crew) / (base.crew_capacity * 0.5)) if base.crew_capacity > 0 else 1.0
+        # Crew effect: baseline 1.0 with no crew; up to +20% when fully crewed
+        if base.crew_capacity > 0 and len(self.assigned_crew) > 0:
+            crew_ratio = min(1.0, len(self.assigned_crew) / base.crew_capacity)
+            crew_mod = min(1.2, 1.0 + 0.2 * crew_ratio)
+        else:
+            crew_mod = 1.0
         
         return {
             'health': int(base.max_health * condition_mod),
@@ -325,20 +330,114 @@ class PlanetEconomy:
                 self.stockpiles[commodity] = 0
                 
     def daily_economic_update(self):
-        # Production phase
-        for commodity, amount in self.daily_production.items():
-            production = amount
+        # Energy budget (solar/grid + fuel burning). Energy measured in arbitrary units
+        base_solar = int((self.population / 30000))
+        # burn up to this many fuel units per day for energy
+        max_burn = max(1, int(self.population / 50000))
+        burn = min(max_burn, self.stockpiles.get('fuel', 0))
+        energy = base_solar + burn * 5
+        self.stockpiles['fuel'] = self.stockpiles.get('fuel', 0) - burn
+        if self.blockaded:
+            energy = int(energy * (0.8 - min(0.3, self.blockade_days * 0.03)))
+        # Random minor outages
+        if random.random() < 0.05:
+            energy = int(energy * 0.97)
+
+        # Production recipes: inputs per unit output and energy cost
+        recipes = {
+            'minerals': {'inputs': {}, 'energy': 1},
+            'fuel': {'inputs': {}, 'energy': 1},
+            'technology': {'inputs': {'minerals': 1}, 'energy': 2},
+            'weapons': {'inputs': {'technology': 1}, 'energy': 3},
+            'medicine': {'inputs': {'food': 1, 'technology': 1}, 'energy': 1},
+            'luxury_goods': {'inputs': {'technology': 1, 'spices': 1}, 'energy': 2},
+            'spices': {'inputs': {}, 'energy': 1},
+            'food': {'inputs': {}, 'energy': 1},
+        }
+
+        target_buffer_days = 45
+
+        def produce(commodity, desired_units):
+            nonlocal energy
+            if desired_units <= 0:
+                return 0
+            recipe = recipes.get(commodity, {'inputs': {}, 'energy': 0})
+            # limit by energy
+            max_by_energy = energy // recipe['energy'] if recipe['energy'] > 0 else desired_units
+            units = min(desired_units, max_by_energy)
+            if units <= 0:
+                return 0
+            # limit by inputs
+            for inp, req in recipe['inputs'].items():
+                avail = self.stockpiles.get(inp, 0)
+                if req > 0:
+                    units = min(units, int(avail / req))
+                if units <= 0:
+                    return 0
+            # days-of-supply throttle
+            daily_need = self.daily_consumption.get(commodity, 0)
+            if daily_need > 0:
+                desired_stock = daily_need * target_buffer_days
+                current = self.stockpiles.get(commodity, 0)
+                if current >= desired_stock * 2:
+                    units = 0
+                elif current > desired_stock:
+                    surplus_ratio = (current - desired_stock) / desired_stock
+                    units = int(units * max(0.2, 1.0 - 0.8 * surplus_ratio))
+            if commodity == 'food':
+                need = self.daily_consumption.get('food', 1)
+                if self.stockpiles.get('food', 0) > need * 120:
+                    units = 0
+            if units <= 0:
+                return 0
+            # consume inputs and energy
+            for inp, req in recipe['inputs'].items():
+                self.stockpiles[inp] -= int(req * units)
+            energy -= units * recipe['energy']
+            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0) + units
+            return units
+
+        # Production order: extract basics first, then transform
+        order = ['minerals', 'fuel', 'technology', 'weapons', 'medicine', 'luxury_goods', 'spices', 'food']
+        for commodity in order:
+            desired = int(self.daily_production.get(commodity, 0))
             if self.blockaded:
-                production = int(production * (0.5 - min(0.4, self.blockade_days * 0.05)))
-            self.stockpiles[commodity] += production
+                desired = int(desired * 0.7)
+            produce(commodity, desired)
             
-        # Consumption phase
+        # Consumption phase with elasticity and operational costs
         for commodity, amount in self.daily_consumption.items():
             consumption = amount
-            if self.stockpiles[commodity] < consumption * 3:
+            # Random shock +-2%
+            shock = 1.0 + random.uniform(-0.02, 0.02)
+            consumption = int(consumption * shock)
+            # Elasticity: when stockpiles are high, consume slightly more; when low, prioritise essentials
+            if self.stockpiles.get(commodity, 0) > amount * 30:
+                consumption = int(consumption * 1.1)
+            elif self.stockpiles.get(commodity, 0) < amount * 3:
                 consumption = int(consumption * 1.2)
-            actual_consumption = min(consumption, self.stockpiles[commodity])
-            self.stockpiles[commodity] -= actual_consumption
+            actual_consumption = min(consumption, self.stockpiles.get(commodity, 0))
+            self.stockpiles[commodity] = max(0, self.stockpiles.get(commodity, 0) - actual_consumption)
+        # Operational/storage costs scale with stockpile size
+        for commodity in list(self.stockpiles.keys()):
+            base_fee = 0.005  # 0.5% base
+            fee = int(self.stockpiles[commodity] * base_fee)
+            # Extra fee beyond 90 days buffer
+            d_need = self.daily_consumption.get(commodity, 0)
+            if d_need > 0:
+                buffer90 = d_need * 90
+                if self.stockpiles[commodity] > buffer90:
+                    extra = int((self.stockpiles[commodity] - buffer90) * 0.02)
+                    fee += extra
+            self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - fee)
+        # Perishables decay beyond buffer
+        perishables = {'food', 'medicine', 'spices'}
+        for commodity in perishables:
+            if commodity in self.stockpiles:
+                buffer = self.daily_consumption.get(commodity, 1) * 60  # 60 days buffer
+                if self.stockpiles[commodity] > buffer:
+                    decay = int((self.stockpiles[commodity] - buffer) * 0.02)  # 2% decay beyond buffer
+                    self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - decay)
             
         # Blockade effects
         if self.blockaded:
@@ -348,6 +447,14 @@ class PlanetEconomy:
                 self.stockpiles[commodity] = max(0, self.stockpiles[commodity] - waste)
         else:
             self.blockade_days = 0
+
+        # Pirate targeting heuristic: surplus of any commodity can attract raids
+        for commodity, need in self.daily_consumption.items():
+            current = self.stockpiles.get(commodity, 0)
+            if current > need * 120:  # extreme surplus
+                if random.random() < 0.01:
+                    loss = int(current * 0.02)
+                    self.stockpiles[commodity] = max(0, current - loss)
             
         self.trade_volume_today = {}
 
