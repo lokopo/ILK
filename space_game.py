@@ -7222,6 +7222,36 @@ class TransportContractRegistry:
         except Exception:
             pass
 
+    def get_local_contract_summaries(self, planet_name: str):
+        """Return brief contract summaries visible to a given planet based on physical knowledge."""
+        summaries = []
+        try:
+            for cid, data in self._contracts.items():
+                origin = getattr(data.get('origin'), 'name', None)
+                dest = getattr(data.get('dest'), 'name', None)
+                visible = False
+                perspective = None
+                if origin == planet_name and data.get('known_to_origin'):
+                    visible = True
+                    perspective = 'origin'
+                if dest == planet_name and data.get('known_to_dest'):
+                    visible = True if not perspective else True
+                    perspective = perspective or 'dest'
+                if not visible:
+                    continue
+                summaries.append({
+                    'id': cid,
+                    'role': perspective,
+                    'status': data.get('status', 'unknown'),
+                    'commodity': data.get('commodity'),
+                    'quantity': int(data.get('quantity', 0)),
+                    'counterparty': dest if perspective == 'origin' else origin,
+                    'value': int(data.get('total_cost', 0))
+                })
+        except Exception:
+            pass
+        return summaries
+
 contract_registry = TransportContractRegistry()
 
 # ===== TRADE LANE WAYPOINTS =====
@@ -7484,11 +7514,19 @@ class TradingUI:
         self.btn_fill.on_click = self._refuel_fill
         self.btn_close_refuel.on_click = lambda: self._toggle_refuel(False)
         
+        # Local knowledge panel
+        self.knowledge_text = Text(
+            parent=self.panel,
+            text='',
+            position=(-0.4, 0.12),
+            scale=0.75,
+            color=color.light_gray
+        )
         # Commodity list
         self.commodity_list = Text(
             parent=self.panel,
             text='',
-            position=(-0.4, -0.1),
+            position=(-0.4, -0.06),
             scale=0.8,
             color=color.white
         )
@@ -7544,6 +7582,22 @@ class TradingUI:
         except Exception:
             pass
         
+        # Update local knowledge: recent news and visible contracts
+        try:
+            knowledge = physical_communication.get_planet_knowledge(self.current_planet)
+            news_lines = []
+            for news in knowledge.get('news', [])[-2:]:
+                age_h = (time.time() - news.timestamp) / 3600
+                news_lines.append(f"📰 {news.headline} ({news.reliability:.0%}, {age_h:.1f}h)")
+            contracts = contract_registry.get_local_contract_summaries(self.current_planet)
+            if contracts:
+                news_lines.append("Contracts:")
+                for c in contracts[:3]:
+                    news_lines.append(f" • {c['id']} [{c['role']}] {c['status']} {c['commodity']}x{c['quantity']} ↔ {c['counterparty']}")
+            self.knowledge_text.text = "\n".join(news_lines)
+        except Exception:
+            self.knowledge_text.text = ''
+
         # Update commodity list with realistic supply data
         commodity_text = "COMMODITIES:\n\n"
         commodities = list(market_system.commodities.keys())
