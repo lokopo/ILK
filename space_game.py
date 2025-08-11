@@ -7755,9 +7755,50 @@ def _assign_uuid_label(entity):
     if getattr(entity, '_uuid_labeled', False):
         return
     try:
-        import random, time
-        uid = f"{int(time.time()*1000)%100000}-{random.randint(100,999)}"
+        import hashlib
+        
+        def _safe_attr(obj, name, default=''):
+            try:
+                val = getattr(obj, name, default)
+                return '' if val is None else str(val)
+            except Exception:
+                return ''
+        
+        def _round_tuple(val, decimals=2):
+            try:
+                return tuple(round(float(x), decimals) for x in tuple(val))
+            except Exception:
+                try:
+                    return round(float(val), decimals)
+                except Exception:
+                    return ''
+        
+        # Build a stable signature from meaningful properties
+        parts = []
+        parts.append(entity.__class__.__name__)
+        parts.append(_safe_attr(entity, 'name'))
+        parts.append(_safe_attr(entity, 'text'))
+        parts.append(str(_round_tuple(_safe_attr(entity, 'position'))))
+        parts.append(str(_round_tuple(_safe_attr(entity, 'scale'))))
+        parts.append(str(_round_tuple(_safe_attr(entity, 'origin'))))
+        
+        parent = getattr(entity, 'parent', None)
+        if parent is not None:
+            parts.append('P:' + parent.__class__.__name__)
+            parts.append('Ptext:' + _safe_attr(parent, 'text'))
+            # Sibling index to disambiguate
+            try:
+                idx = parent.children.index(entity) if hasattr(parent, 'children') else -1
+            except Exception:
+                idx = -1
+            parts.append(f'idx:{idx}')
+        
+        sig = '||'.join(parts)
+        digest = hashlib.md5(sig.encode('utf-8')).hexdigest()
+        simple_id = int(digest[:8], 16) % 100000  # 0..99999
+        uid = f"{simple_id:05d}"
         entity._ui_uuid = uid
+        
         # Place a small cyan tag in the top-left of the element's local space
         try:
             tag = Text(parent=entity, text=f"#{uid}", position=(-0.48, 0.45), scale=0.5, color=color.cyan)
@@ -9200,7 +9241,6 @@ scene_manager.initialize_space()
 military_manager.initialize_military_presence()
 # Game state
 paused = False
-
 def input(key):
     global paused
     
@@ -9754,50 +9794,6 @@ def input(key):
                 accuracy_str = f"{rumor.current_accuracy:.0%} accurate"
                 spread_str = f"spread to {len(rumor.visited_planets)} planets"
                 print(f"   • {rumor.content[:40]}... ({age_str}, {accuracy_str}, {spread_str})")
-        
-def show_economic_info(planet_name):
-    """Display detailed economic information about a planet"""
-    planet_info = market_system.get_planet_info(planet_name)
-    if not planet_info:
-        print(f"❌ No economic data for {planet_name}")
-        return
-        
-    print(f"\n📊 ECONOMIC REPORT: {planet_name}")
-    print(f"Population: {planet_info['population']:,}")
-    print(f"Type: {planet_info['type'].title()}")
-    print(f"Blockaded: {'YES' if planet_info['blockaded'] else 'NO'}")
-    if planet_info['blockaded']:
-        print(f"Blockade Duration: {planet_info['blockade_days']} days")
-        
-    print("\n📦 STOCKPILES:")
-    economy = market_system.planet_economies[planet_name]
-    for commodity, amount in sorted(planet_info['stockpiles'].items()):
-        consumption = economy.daily_consumption.get(commodity, 0)
-        production = economy.daily_production.get(commodity, 0)
-        
-        # Calculate days of supply
-        if consumption > 0:
-            days_supply = amount / consumption
-            supply_status = f"({days_supply:.1f} days)"
-        else:
-            supply_status = "(not consumed)"
-            
-        # Show production/consumption balance
-        if production > consumption:
-            balance = f"+{production - consumption}/day"
-        elif consumption > production:
-            balance = f"-{consumption - production}/day"
-        else:
-            balance = "balanced"
-            
-        print(f"  {commodity}: {amount} {supply_status} {balance}")
-        
-    print(f"\n💰 Current market prices:")
-    for commodity in ['food', 'technology', 'minerals', 'luxury_goods']:
-        buy_price = market_system.get_buy_price(planet_name, commodity)
-        sell_price = market_system.get_sell_price(planet_name, commodity)
-        available = market_system.get_available_supply(planet_name, commodity)
-        print(f"  {commodity}: Buy {buy_price}, Sell {sell_price}, Available: {available}")
     
     if key == 'left mouse down' and not paused:
         if scene_manager.current_state == GameState.SPACE:
