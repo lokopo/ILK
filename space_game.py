@@ -3344,6 +3344,37 @@ class PhysicalCommunicationSystem:
                 if current_time - news.timestamp < 1209600  # 14 days
             ]
 
+    def estimate_planet_threat(self, planet_name: str) -> str:
+        """Estimate local pirate threat for a planet from recent news/rumors.
+        Returns one of: 'UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'EXTREME'."""
+        try:
+            news_list = self.planetary_news.get(planet_name, [])
+            if not news_list:
+                return 'UNKNOWN'
+            # Consider last 48 hours
+            cutoff = time.time() - 172800
+            score = 0.0
+            for n in news_list:
+                if n.timestamp < cutoff:
+                    continue
+                headline = (n.headline or '').lower()
+                details = (n.details or '').lower()
+                if 'pirate' in headline or 'pirate' in details or 'raid' in details:
+                    # Weight by reliability and recency
+                    recency = max(0.1, 1.0 - (time.time() - n.timestamp) / 172800.0)
+                    score += n.reliability * 2.0 * recency
+                if 'blockade' in headline or 'blockade' in details:
+                    score += 1.0
+            if score < 1.0:
+                return 'LOW'
+            if score < 2.0:
+                return 'MEDIUM'
+            if score < 3.5:
+                return 'HIGH'
+            return 'EXTREME'
+        except Exception:
+            return 'UNKNOWN'
+
 # Global systems
 market_system = MarketSystem()
 player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
@@ -8364,8 +8395,15 @@ class MapUI:
                             lines.append(f"    Route: {' -> '.join(route)}")
         except Exception:
             pass
-        # Threat
-        lines.append(f"Pirate threat: {unified_transport_system.calculate_threat_level()}")
+        # Threat: show local threat based on physically known news for nearest/current planet
+        try:
+            local_planet = getattr(scene_manager.current_planet, 'name', None)
+            if not local_planet and planets:
+                local_planet = min(planets, key=lambda p: (p.position - pos).length()).name
+            local_threat = physical_communication.estimate_planet_threat(local_planet) if local_planet else 'UNKNOWN'
+            lines.append(f"Local threat @ {local_planet or 'Unknown'}: {local_threat}")
+        except Exception:
+            lines.append(f"Local threat: UNKNOWN")
         self.map_text.text = "\n".join(lines)
         
     def handle_input(self, key):
@@ -8384,7 +8422,10 @@ class MapUI:
                         # Use nearest planet to player as origin
                         pos = scene_manager.space_controller.position if scene_manager.current_state == GameState.SPACE else Vec3(0, 0, 0)
                         origin = min(planets, key=lambda p: (p.position - pos).length()).name if planets else target
-                    route = find_route(origin, target)
+                    # If the player hasn't physically learned about the target, only set direct course without steps
+                    knowledge = physical_communication.get_planet_knowledge(origin)
+                    knows_target = any((target in n.details) or (target in n.headline) for n in knowledge.get('news', []))
+                    route = find_route(origin, target) if knows_target else [target]
                     if not route:
                         route = [target]
                     player.course_route = route
@@ -8469,6 +8510,19 @@ class MapUI:
             sel = int(key)
             if sel in self._available_index_to_id:
                 cid = self._available_index_to_id[sel]
+                # Gate acceptance if destination is unknown at this planet
+                try:
+                    contract = next((c for c in dynamic_contracts.available_contracts if c.contract_id == cid), None)
+                    dest = contract.metadata.get('dest') if (contract and contract.metadata) else None
+                    current_planet_name = getattr(scene_manager.current_planet, 'name', None)
+                    if dest and current_planet_name and current_planet_name != dest:
+                        knowledge = physical_communication.get_planet_knowledge(current_planet_name)
+                        knows = any((dest in n.details) or (dest in n.headline) for n in knowledge.get('news', []))
+                        if not knows:
+                            print(f"ℹ️ Destination {dest} is unknown here. Visit planets to learn more or wait for news.")
+                            return True
+                except Exception:
+                    pass
                 if dynamic_contracts.accept_contract(cid):
         self.update_display()
                 return True
@@ -8943,12 +8997,23 @@ def input(key):
             fee_modifier = 0.8
         elif rep < -10:
             fee_modifier = 1.3
-        escort_fee = int(base_fee * fee_modifier)
+        # Scale fee by local threat: higher threat increases price and availability
+        try:
+            local_planet_name = getattr(nearest, 'name', None)
+            local_threat = physical_communication.estimate_planet_threat(local_planet_name) if local_planet_name else 'UNKNOWN'
+            threat_multiplier = {'UNKNOWN': 1.0, 'LOW': 0.9, 'MEDIUM': 1.0, 'HIGH': 1.15, 'EXTREME': 1.3}.get(local_threat, 1.0)
+        except Exception:
+            threat_multiplier = 1.0
+        escort_fee = int(base_fee * fee_modifier * threat_multiplier)
         if player_wallet.can_afford(escort_fee):
             player_wallet.spend(escort_fee)
             print(f"🛰️ Escort requested from {faction_id}. Fee paid: {escort_fee} credits")
             try:
-                for _ in range(2):
+                # More escorts available in high-threat regions
+                num_escorts = 2
+                if threat_multiplier > 1.25:
+                    num_escorts = 3
+                for _ in range(num_escorts):
                     pos = player.position + Vec3(random.uniform(-20, 20), 0, random.uniform(-20, 20))
                     escort = MilitaryShip(faction_id, MilitaryShipType.ESCORT, pos, patrol_radius=150)
                     escort.follow_player = True
