@@ -7750,7 +7750,6 @@ try:
     debug_show_ui_uuids
 except NameError:
     debug_show_ui_uuids = True
-
 def _assign_uuid_label(entity):
     if getattr(entity, '_uuid_labeled', False):
         return
@@ -7772,6 +7771,21 @@ def _assign_uuid_label(entity):
                     return round(float(val), decimals)
                 except Exception:
                     return ''
+        
+        # Prefer explicit ui_key for maximum stability
+        key_source = _safe_attr(entity, 'ui_key')
+        if key_source:
+            digest = hashlib.md5(key_source.encode('utf-8')).hexdigest()
+            simple_id = int(digest[:8], 16) % 100000
+            uid = f"{simple_id:05d}"
+            entity._ui_uuid = uid
+            try:
+                tag = Text(parent=entity, text=f"#{uid}", position=(-0.48, 0.45), scale=0.5, color=color.cyan)
+                entity._uuid_label = tag
+            except Exception:
+                pass
+            entity._uuid_labeled = True
+            return
         
         # Build a stable signature from meaningful properties
         parts = []
@@ -8530,7 +8544,6 @@ class EventUI:
             destroy(button)
         self.option_buttons.clear()
         ui_manager.hide(self)
-
 # Create event UI
 event_ui = EventUI()
 ui_manager.register(event_ui)
