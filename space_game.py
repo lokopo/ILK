@@ -4136,7 +4136,7 @@ settings_title = Text(
 )
 settings_daylen_label = Text(
     parent=pause_panel,
-    text=f'Day length (s): {int(time_system.day_length)}',
+    text='Day length (s):',
     position=(-0.35, 0.12),
     scale=0.9,
     color=color.white
@@ -4179,21 +4179,17 @@ apply_button = Button(
 # Wire button behavior
 try:
     def _apply_speed():
-        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
         # HUD will reflect speed label automatically in update loop
         print(f'⏱️ Applied speed: {time_system.get_speed_label()}')
     
     def _slower():
         time_system.decrease_speed()
-        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
     
     def _faster():
         time_system.increase_speed()
-        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
     
     def _reset():
         time_system.set_day_length(300)
-        settings_daylen_label.text = f'Day length (s): {int(time_system.day_length)}'
     
     btn_slower.on_click = _slower
     btn_faster.on_click = _faster
