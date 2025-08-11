@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 HEADLESS_MODE = os.environ.get('GAME_HEADLESS_MODE', '0') == '1'
 TEST_MODE = os.environ.get('GAME_TEST_MODE', '0') == '1'
 
+# Debug configuration
+debug_show_ui_uuids = False
+
 logger.info("=== ILK SPACE GAME STARTING ===")
 logger.info(f"Headless mode: {HEADLESS_MODE}")
 logger.info(f"Test mode: {TEST_MODE}")
@@ -411,8 +414,23 @@ else:
         GRAPHICS_AVAILABLE = True
         logger.info("Graphics components loaded successfully")
         
-        # Create Ursina app for GUI mode
-        app = Ursina(borderless=False)  # Make window resizable and movable
+        # Create Ursina app for GUI mode with anti-flickering settings
+        app = Ursina(
+            borderless=False,  # Make window resizable and movable
+            vsync=True,  # Enable vertical sync to prevent screen tearing
+            development_mode=False,  # Disable development mode for better performance
+            title='ILK Space Game'
+        )
+        
+        # Additional anti-flickering settings
+        window.vsync = True
+        window.fps_counter.enabled = False  # Disable FPS counter to reduce UI updates
+        window.exit_button.visible = False  # Hide exit button to prevent accidental clicks
+        
+        # Set window properties for better performance
+        window.borderless = False
+        window.fullscreen = False
+        window.resizable = True
         try:
             if debug_show_ui_uuids:
                 try:
@@ -6388,25 +6406,6 @@ class TimeSystem:
         
     def get_speed_label(self) -> str:
         return f"{int(self.day_length)}s/day"
-# ... existing code ...
-    def update(self, dt, player_position, current_time):
-        # Update character aging using in-game days (scaled by game speed)
-        days_elapsed = dt / max(1e-6, time_system.day_length)
-        self.character_development.advance_time(days_elapsed)
-        
-        # Update fleet positions
-        if self.fleet_manager.fleet:
-            self.fleet_manager.update_fleet_positions(player_position)
-        
-        # Random treasure scanning
-        if random.random() < 0.005:  # 0.5% chance per update
-            treasures = self.treasure_hunting.scan_for_treasures(player_position)
-# ... existing code ...
-            # Update time display
-            self.time_text.text = f'Day {time_system.game_day}  ({time_system.get_speed_label()})'
-            
-            # Update transport status display
-            stats = unified_transport_system.get_statistics()
 class Mission:
     def __init__(self, mission_type, faction_id, description, reward, reputation_change, requirements=None):
         self.mission_type = mission_type
@@ -8042,7 +8041,7 @@ class TradingUI:
         self.active = False
         self.current_planet = None
         
-        # Main trading panel
+        # Main trading panel with anti-flickering settings
         self.panel = Panel(
             parent=camera.ui,
             model='quad',
@@ -8050,6 +8049,9 @@ class TradingUI:
             color=color.black66,
             enabled=False
         )
+        # Anti-flickering settings for UI panel
+        self.panel.eternal = True  # Prevent automatic cleanup
+        self.panel.ignore_paused = True  # Keep rendering even when paused
         if debug_show_ui_uuids:
             _assign_uuid_label(self.panel)
         
@@ -8079,7 +8081,7 @@ class TradingUI:
             scale=1,
             color=color.yellow
         )
-        # Quick refuel subpanel
+        # Quick refuel subpanel with anti-flickering settings
         self.refuel_panel = Panel(
             parent=self.panel,
             model='quad',
@@ -8088,6 +8090,9 @@ class TradingUI:
             color=color.black66,
             enabled=False
         )
+        # Anti-flickering settings for refuel panel
+        self.refuel_panel.eternal = True
+        self.refuel_panel.ignore_paused = True
         self.refuel_text = Text(parent=self.refuel_panel, text='', position=(0, 0.07), scale=0.75, color=color.cyan)
         self.btn_plus1 = Button(text='+1', parent=self.refuel_panel, position=(-0.14, -0.06), scale=(0.12, 0.08))
         self.btn_plus10 = Button(text='+10', parent=self.refuel_panel, position=(0.0, -0.06), scale=(0.12, 0.08))
@@ -8997,6 +9002,69 @@ class MissionUI:
         
     # Legacy mission accept/complete removed in favor of dynamic contracts
 
+# Map UI
+class MapUI:
+    def __init__(self):
+        self.active = False
+        
+        # Main map panel
+        self.panel = Panel(
+            parent=camera.ui,
+            model='quad',
+            scale=(0.9, 0.8),
+            color=color.black66,
+            enabled=False
+        )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
+        
+        # Title
+        self.title = Text(
+            parent=self.panel,
+            text='STAR MAP',
+            position=(0, 0.35),
+            scale=1.5,
+            color=color.cyan
+        )
+        
+        # Map content
+        self.map_content = Text(
+            parent=self.panel,
+            text='',
+            position=(0, -0.05),
+            scale=0.9,
+            color=color.white
+        )
+        
+        # Instructions
+        self.instructions = Text(
+            parent=self.panel,
+            text='ESC to close',
+            position=(0, -0.35),
+            scale=1,
+            color=color.light_gray
+        )
+        
+    def show(self):
+        ui_manager.show(self)
+        self.update_display()
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
+        
+    def hide(self):
+        ui_manager.hide(self)
+        
+    def update_display(self):
+        map_text = "KNOWN PLANETS:\n\n"
+        
+        for planet in planets:
+            distance = (planet.position - player.position).length()
+            map_text += f"• {planet.name} ({distance:.1f} units)\n"
+            map_text += f"  Type: {planet.planet_type}\n"
+            map_text += f"  Faction: {planet.faction}\n\n"
+        
+        self.map_content.text = map_text
+
 # Create UI systems
 faction_ui = FactionUI()
 crew_ui = CrewUI()
@@ -9032,8 +9100,19 @@ class TipsHUD:
             self.text.enabled = False
 tips_hud = TipsHUD()
 
+# Frame rate limiting and smoothing variables
+_last_update_time = 0
+_target_fps = 60
+_frame_time = 1.0 / _target_fps
+
 def update():
-    global nearby_planet
+    global nearby_planet, _last_update_time
+    
+    # Frame rate limiting to reduce flickering
+    current_time = time.time()
+    if current_time - _last_update_time < _frame_time:
+        return
+    _last_update_time = current_time
     
     if not paused and not ui_manager.any_active():
         if scene_manager.current_state == GameState.SPACE:
@@ -9901,6 +9980,27 @@ def input(key):
                 curve=curve.linear
             )
             destroy(bullet, delay=2)
+
+# Additional rendering optimizations to reduce flickering
+try:
+    # Set rendering quality and performance settings
+    window.vsync = True
+    window.fps_counter.enabled = False
+    
+    # Optimize rendering pipeline
+    render.set_shader(None)  # Use default shader for better performance
+    
+    # Set texture filtering for smoother rendering
+    from panda3d.core import Texture, SamplerState
+    Texture.setDefaultMagfilter(SamplerState.FTLinear)
+    Texture.setDefaultMinfilter(SamplerState.FTLinearMipmapLinear)
+    
+    # Disable unnecessary rendering features
+    base.set_background_color(0, 0, 0, 1)
+    
+    print("🎮 Anti-flickering optimizations applied successfully!")
+except Exception as e:
+    print(f"⚠️ Some rendering optimizations failed: {e}")
 
 # Run the game
 app.run() 
