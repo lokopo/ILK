@@ -778,7 +778,7 @@ class EnhancedPiratesFeatures:
     
     def update(self, dt, player_position, current_time):
         # Update character aging (convert seconds to days)
-        self.character_development.advance_time(dt / 86400.0)
+        self.character_development.advance_time(dt / time_system.day_length)
         
         # Update fleet positions
         if self.fleet_manager.fleet:
@@ -788,6 +788,7 @@ class EnhancedPiratesFeatures:
         if random.random() < 0.005:  # 0.5% chance per update
             treasures = self.treasure_hunting.scan_for_treasures(player_position)
 
+# ... existing code ...
 # Trading and Economy System
 class Commodity:
     def __init__(self, name, base_price, category="general"):
@@ -1499,7 +1500,6 @@ class EnhancedCrewMember:
                         print(f"{self.name} improved their {skill_type} skill to {self.skills[skill_type]}!")
                     else:
                         print(f"{self.name} has mastered {skill_type} at maximum level!")
-
 class RealisticShipSystems:
     def __init__(self):
         # Initialize ship components
@@ -2199,7 +2199,6 @@ class WeatherSystem:
             if random.random() < 0.0008 * strength:
                 ship_systems.components[ComponentType.ENGINE].take_damage(2)
                 print("⚡ Ion storm disrupted engines!")
-
 class FactionMilitaryManager:
     """Manages military ships and territorial control for all factions"""
     
@@ -2992,7 +2991,6 @@ class DynamicContractSystem:
             
         contract.status = ContractStatus.FAILED
         self.completed_contracts.append(contract)
-
 # Create global systems
 weather_system = WeatherSystem()
 military_manager = FactionMilitaryManager()
@@ -3673,7 +3671,6 @@ class SpaceNPC(Entity):
                     random.uniform(-1, 1),
                     random.uniform(-2, 2)
                 )
-
 # Custom Space Controller
 class SpaceController(Entity):
     def __init__(self, **kwargs):
@@ -3918,7 +3915,7 @@ class SpaceController(Entity):
             self.crew_text.text = f'Crew: {crew_count}/{crew_system.max_crew} (Morale: {crew_system.morale}%)'
             
             # Update time display
-            self.time_text.text = f'Day {time_system.game_day}'
+            self.time_text.text = f'Day {time_system.game_day}  ({time_system.get_speed_label()})'
             
             # Update transport status display
             stats = unified_transport_system.get_statistics()
@@ -4263,7 +4260,6 @@ class TownController(Entity):
                         if self.intersects(entity).hit:
                             self.position = original_position
                             break
-
 class SceneManager:
     def __init__(self):
         self.current_state = GameState.SPACE
@@ -4837,7 +4833,6 @@ def save_game():
         with open(filename, 'w') as f:
             json.dump(game_state, f)
         print(f'Game saved to {filename}')
-
 def load_game():
     if not os.path.exists('saves'):
         print('No saves directory found')
@@ -5560,7 +5555,6 @@ class MessageShip(TransportShip):
             print(f"📬 Message delivered to {destination_name}")
             
         super().on_arrival()
-
 class CargoShip(TransportShip):
     """Ship carrying cargo between planets"""
     
@@ -6282,6 +6276,10 @@ class TimeSystem:
         self.game_day = 1
         self.last_day_update = time.time()
         self.day_length = 300  # 5 minutes = 1 game day
+        # Centralized speed control bounds and step (seconds per game day)
+        self.min_day_length = 30
+        self.max_day_length = 1800
+        self.day_length_step = 30
         
     def update(self):
         current_time = time.time()
@@ -6289,76 +6287,44 @@ class TimeSystem:
             self.advance_day()
             self.last_day_update = current_time
             
-    def advance_day(self):
-        self.game_day += 1
-        
-        # Daily crew maintenance
-        crew_system.pay_crew()
-        crew_system.update_morale()
-        
-        # Health regeneration
-        if crew_system.crew_members:
-            health_regen = crew_system.get_total_bonuses()["health_regen"]
-            combat_system.heal(int(health_regen))
-            
-        # Market fluctuations
-        self.update_markets()
-        
-        print(f"Day {self.game_day} - Crew wages: {crew_system.daily_wages} credits")
-        
-    def update_markets(self):
-        """Run daily economic simulation for all planets"""
-        print(f"\n🌍 Day {self.game_day} Economic Report:")
-        
-        # Run daily updates for all planet economies  
-        market_system.daily_economic_update()
-        
-        # Random events that can affect supply chains
-        if random.random() < 0.1:  # 10% chance daily
-            self.random_economic_event()
-            
-    def random_economic_event(self):
-        """Generate random economic events"""
-        if not market_system.planet_economies:
+    def set_day_length(self, seconds: float):
+        # Clamp and set seconds per in-game day
+        seconds = float(seconds)
+        if seconds != seconds:  # NaN guard
             return
-            
-        event_type = random.choice(['shortage', 'surplus', 'blockade_start', 'blockade_end'])
-        planet_name = random.choice(list(market_system.planet_economies.keys()))
+        self.day_length = max(self.min_day_length, min(self.max_day_length, seconds))
         
-        if event_type == 'shortage':
-            commodity = random.choice(['food', 'medicine', 'fuel'])
-            economy = market_system.planet_economies[planet_name]
-            # Reduce stockpile by 50%
-            current = economy.stockpiles.get(commodity, 0)
-            economy.stockpiles[commodity] = current // 2
-            print(f"⚠️ {planet_name} reports {commodity} shortage due to supply chain disruption!")
+    def increase_speed(self):
+        # Faster time progression => fewer seconds per day
+        self.set_day_length(self.day_length - self.day_length_step)
+        
+    def decrease_speed(self):
+        # Slower time progression => more seconds per day
+        self.set_day_length(self.day_length + self.day_length_step)
+        
+    def get_speed_label(self) -> str:
+        return f"{int(self.day_length)}s/day"
+# ... existing code ...
+    def update(self, dt, player_position, current_time):
+        # Update character aging using in-game days (scaled by game speed)
+        days_elapsed = dt / max(1e-6, time_system.day_length)
+        self.character_development.advance_time(days_elapsed)
+        
+        # Update fleet positions
+        if self.fleet_manager.fleet:
+            self.fleet_manager.update_fleet_positions(player_position)
+        
+        # Random treasure scanning
+        if random.random() < 0.005:  # 0.5% chance per update
+            treasures = self.treasure_hunting.scan_for_treasures(player_position)
+# ... existing code ...
+            # Update time display
+            self.time_text.text = f'Day {time_system.game_day}  ({time_system.get_speed_label()})'
             
-        elif event_type == 'surplus':
-            commodity = random.choice(['minerals', 'luxury_goods', 'technology'])
-            economy = market_system.planet_economies[planet_name]
-            # Increase stockpile
-            bonus = random.randint(100, 500)
-            economy.stockpiles[commodity] = economy.stockpiles.get(commodity, 0) + bonus
-            print(f"📈 {planet_name} discovers new {commodity} deposits! Market flooded!")
-            
-        elif event_type == 'blockade_start' and random.random() < 0.3:  # 30% chance
-            if not market_system.planet_economies[planet_name].blockaded:
-                market_system.set_blockade(planet_name, True)
-                
-        elif event_type == 'blockade_end':
-            if market_system.planet_economies[planet_name].blockaded:
-                market_system.set_blockade(planet_name, False)
+            # Update transport status display
+            stats = unified_transport_system.get_statistics()
+# ... existing code ...
 
-class Mission:
-    def __init__(self, mission_type, faction_id, description, reward, reputation_change, requirements=None):
-        self.mission_type = mission_type
-        self.faction_id = faction_id
-        self.description = description
-        self.reward = reward
-        self.reputation_change = reputation_change
-        self.requirements = requirements or {}
-        self.completed = False
-        
 class MissionSystem:
     def __init__(self):
         self.available_missions = []
@@ -7002,7 +6968,6 @@ class EnhancedPlanetEconomy:
                             self.planet_name, recipe_name, self.stockpiles, crew_effectiveness
                         )
                         break  # Only start one process at a time
-
 class PirateBaseEconomy(EnhancedPlanetEconomy):
     """Economy for pirate bases with contraband and raiding needs"""
     
@@ -7780,7 +7745,6 @@ def set_ui_uuid_labels_visible(visible: bool):
             _toggle_uuid_label(child, visible)
     except Exception:
         pass
-
 # ===== STRUCTURED DIAGNOSTICS =====
 import os
 import json
@@ -8565,7 +8529,6 @@ class FactionUI:
             faction_text += f"{color_indicator} {faction.name}: {status} ({reputation:+d})\n"
         
         self.faction_list.text = faction_text
-
 # Crew Management UI
 class CrewUI:
     def __init__(self):
@@ -9360,7 +9323,6 @@ def cancel_landing():
     player.enabled = True
     mouse.locked = True
     mouse.visible = False
-
 # Set up button callbacks
 land_button.on_click = land_on_planet
 cancel_button.on_click = cancel_landing
@@ -9447,6 +9409,20 @@ def input(key):
             os.makedirs('screenshots')
         base.win.saveScreenshot(Filename(f'screenshots/screenshot_{time.time()}.png'))
         print(f'Screenshot saved to screenshots folder')
+
+    # --- Game speed controls ---
+    if key == '[':
+        time_system.decrease_speed()
+        print(f"⏱️ Slower time: {time_system.get_speed_label()}")
+        return
+    elif key == ']':
+        time_system.increase_speed()
+        print(f"⏱️ Faster time: {time_system.get_speed_label()}")
+        return
+    elif key == '\\':
+        time_system.set_day_length(300)
+        print(f"⏱️ Reset time speed to {time_system.get_speed_label()}")
+        return
     
     if key == 'e' and not paused:
         # Context-sensitive interact
