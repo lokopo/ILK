@@ -3382,6 +3382,21 @@ class PhysicalCommunicationSystem:
         except Exception:
             return 'UNKNOWN'
 
+    def knowledge_reliability(self, planet_name: str, target_planet: str) -> float:
+        """Average reliability of recent news at planet_name that mention target_planet.
+        Returns 0.0 if no relevant items."""
+        try:
+            items = self.planetary_news.get(planet_name, [])
+            if not items:
+                return 0.0
+            cutoff = time.time() - 604800  # 7 days
+            rels = [n.reliability for n in items if n.timestamp >= cutoff and (target_planet in n.headline or target_planet in n.details)]
+            if not rels:
+                return 0.0
+            return max(0.0, min(1.0, sum(rels) / len(rels)))
+        except Exception:
+            return 0.0
+
 # Global systems
 market_system = MarketSystem()
 player_cargo = CargoSystem(max_capacity=50)  # Start with small cargo hold
@@ -6673,12 +6688,19 @@ class EnhancedPlanetEconomy:
         return base
     
     def estimate_shipping_cost_per_unit(self, origin_planet, destination_planet):
-        """Rough per-unit shipping cost proportional to distance."""
+        """Rough per-unit shipping cost proportional to distance with threat surcharge."""
         try:
             distance = (origin_planet.position - destination_planet.position).length()
         except Exception:
             distance = 100.0
-        return max(0.05 * (distance / 100.0), 0.1)
+        base = max(0.05 * (distance / 100.0), 0.1)
+        try:
+            dest_name = getattr(destination_planet, 'name', None)
+            threat = physical_communication.estimate_planet_threat(dest_name) if dest_name else 'UNKNOWN'
+            surcharge = {'UNKNOWN': 1.0, 'LOW': 1.0, 'MEDIUM': 1.05, 'HIGH': 1.15, 'EXTREME': 1.3}.get(threat, 1.0)
+            return base * surcharge
+        except Exception:
+            return base
             
     def handle_goods_request(self, request):
         """Evaluate and respond to goods request"""
@@ -6749,6 +6771,13 @@ class EnhancedPlanetEconomy:
                 unified_transport_system.payment_ships.append(payment_ship)
                 
                 print(f"📦 {self.planet_name} shipping {can_supply} {commodity} to {request.requesting_planet} @ {unit_needed:.1f}/unit (total {total_cost} cr)")
+                # Adjust insurance premium ratio by knowledge reliability of destination (lower reliability => higher premium)
+                try:
+                    rel = physical_communication.knowledge_reliability(self.planet_name, request.requesting_planet)
+                    reliability_penalty = 1.0 + max(0.0, (1.0 - rel) * 0.25)
+                    SETTINGS['insurance_premium_ratio'] = max(0.03, min(0.12, SETTINGS.get('insurance_premium_ratio', 0.05) * reliability_penalty))
+                except Exception:
+                    pass
                 
     def auto_start_manufacturing(self):
         """Automatically start manufacturing based on available materials and planet type"""
@@ -7659,7 +7688,8 @@ class TradingUI:
             news_lines = []
             for news in knowledge.get('news', [])[-2:]:
                 age_h = (time.time() - news.timestamp) / 3600
-                news_lines.append(f"📰 {news.headline} ({news.reliability:.0%}, {age_h:.1f}h)")
+                badge = '✔️' if news.reliability >= 0.9 else ('~' if news.reliability >= 0.6 else '❓')
+                news_lines.append(f"{badge} {news.headline} ({news.reliability:.0%}, {age_h:.1f}h)")
             contracts = contract_registry.get_local_contract_summaries(self.current_planet)
             if contracts:
                 news_lines.append("Contracts:")
@@ -8383,13 +8413,13 @@ class MapUI:
                 pname = min(planets, key=lambda p: (p.position - pos).length()).name if planets else None
             if pname:
                 knowledge = physical_communication.get_planet_knowledge(pname)
-                recent_news = knowledge.get('news', [])[-3:]
+                recent_news = knowledge.get('news', [])[-6:]
                 if recent_news:
                     lines.append(f"\nNews at {pname}:")
                     for n in recent_news:
                         age_h = (time.time() - n.timestamp) / 3600
-                        reliability = f"{n.reliability:.0%}"
-                        lines.append(f" • {n.headline} ({reliability}, {age_h:.1f}h)")
+                        badge = '✔️' if n.reliability >= 0.9 else ('~' if n.reliability >= 0.6 else '❓')
+                        lines.append(f" {badge} {n.headline} ({n.reliability:.0%}, {age_h:.1f}h)")
         except Exception:
             pass
         # Highlight destinations of active contracts only if known locally
@@ -8449,6 +8479,8 @@ class MapUI:
                     player.course_route = route
                     player.course_route_index = 0
                     player.autopilot = True
+                    if not knows_target:
+                        tips_hud.show_tip("Course set without known route. Visit nearby planets or relay to learn routes.")
                 except Exception:
                     pass
                 self.update_display()
@@ -8537,7 +8569,11 @@ class MapUI:
                         knowledge = physical_communication.get_planet_knowledge(current_planet_name)
                         knows = any((dest in n.details) or (dest in n.headline) for n in knowledge.get('news', []))
                         if not knows:
-                            print(f"ℹ️ Destination {dest} is unknown here. Visit planets to learn more or wait for news.")
+                    print(f"ℹ️ Destination {dest} is unknown here. Visit planets to learn more or wait for news.")
+                    try:
+                        tips_hud.show_tip(f"Destination {dest} unknown. Land on nearby worlds to gather intel.")
+                    except Exception:
+                        pass
                             return True
                 except Exception:
                     pass
@@ -8590,6 +8626,24 @@ manufacturing_ui = ManufacturingUI()
 ui_manager.register(manufacturing_ui)
 map_ui = MapUI()
 ui_manager.register(map_ui)
+
+# Lightweight tips HUD
+class TipsHUD:
+    def __init__(self):
+        self.text = Text(parent=camera.ui, text='', position=(-0.75, -0.45), scale=0.8, color=color.light_gray)
+        self._expire = 0
+
+    def show_tip(self, message: str, duration: float = 5.0):
+        self.text.text = f"💡 {message}"
+        self.text.enabled = True
+        self._expire = time.time() + duration
+
+    def update(self):
+        if self.text.enabled and time.time() > self._expire:
+            self.text.text = ''
+            self.text.enabled = False
+
+tips_hud = TipsHUD()
 
 def update():
     global nearby_planet
@@ -8726,6 +8780,11 @@ def update():
     # Update contract registry for physical knowledge/inquiry
     try:
         contract_registry.update()
+    except Exception:
+        pass
+    # Tips HUD update
+    try:
+        tips_hud.update()
     except Exception:
         pass
     # Periodic autosave every 2 minutes
