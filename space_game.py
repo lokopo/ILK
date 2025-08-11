@@ -1227,7 +1227,20 @@ class MarketSystem:
             return 0
             
         economy = self.planet_economies[planet_name]
-        return economy.get_buy_price(commodity_name)
+        price = economy.get_buy_price(commodity_name)
+        # Rumor-driven volatility: if only rumors exist about shortages or dangers, add variance
+        try:
+            knowledge = physical_communication.get_planet_knowledge(planet_name)
+            rumors = [n for n in knowledge.get('news', []) if 'Traveler' in n.headline or 'Rumor' in n.headline]
+            if rumors:
+                # Increase variance proportional to (1 - average reliability)
+                avg_rel = sum(n.reliability for n in rumors) / max(1, len(rumors))
+                volatility = max(0.0, 1.0 - avg_rel)
+                jitter = 1.0 + random.uniform(-0.1, 0.2) * volatility
+                price = max(1, int(price * jitter))
+        except Exception:
+            pass
+        return price
         
     def get_sell_price(self, planet_name, commodity_name):
         """Price player gets when selling to planet"""
@@ -1235,7 +1248,19 @@ class MarketSystem:
             return 0
             
         economy = self.planet_economies[planet_name]
-        return economy.get_sell_price(commodity_name)
+        price = economy.get_sell_price(commodity_name)
+        # Rumor effect: less reliable info can depress offer prices
+        try:
+            knowledge = physical_communication.get_planet_knowledge(planet_name)
+            rumors = [n for n in knowledge.get('news', []) if 'Traveler' in n.headline or 'Rumor' in n.headline]
+            if rumors:
+                avg_rel = sum(n.reliability for n in rumors) / max(1, len(rumors))
+                volatility = max(0.0, 1.0 - avg_rel)
+                jitter = 1.0 - random.uniform(0.0, 0.15) * volatility
+                price = max(1, int(price * jitter))
+        except Exception:
+            pass
+        return price
         
     def get_available_supply(self, planet_name, commodity_name):
         """How much of this commodity can be purchased from planet"""
@@ -8383,7 +8408,25 @@ class MapUI:
         self._available_index_to_id.clear()
         lines = ["AVAILABLE CONTRACTS:\n"]
         now = time.time()
-        available = dynamic_contracts.available_contracts[:5]
+        # Knowledge-gated available contracts: only show if current planet likely knows the destination
+        gated_available = []
+        try:
+            current_planet_name = getattr(scene_manager.current_planet, 'name', None)
+            for c in dynamic_contracts.available_contracts:
+                dest = c.metadata.get('dest') if c.metadata else None
+                if not dest or not current_planet_name:
+                    gated_available.append(c)
+                    continue
+                if current_planet_name == dest:
+                    gated_available.append(c)
+                    continue
+                knowledge = physical_communication.get_planet_knowledge(current_planet_name)
+                knows = any((dest in n.details) or (dest in n.headline) for n in knowledge.get('news', []))
+                if knows:
+                    gated_available.append(c)
+        except Exception:
+            gated_available = dynamic_contracts.available_contracts[:]
+        available = gated_available[:5]
         for i, c in enumerate(available):
             self._available_index_to_id[i+1] = c.contract_id
             remaining = max(0, int((c.time_limit - (now - c.start_time)) / 60))
