@@ -413,6 +413,14 @@ else:
         
         # Create Ursina app for GUI mode
         app = Ursina(borderless=False)  # Make window resizable and movable
+        try:
+            if debug_show_ui_uuids:
+                try:
+                    annotate_ui_tree(camera.ui)
+                except Exception:
+                    pass
+        except NameError:
+            pass
     except Exception as e:
         logger.error(f"Graphics not available: {e}")
         logger.error(traceback.format_exc())
@@ -639,7 +647,6 @@ class AssaultType(Enum):
     ORBITAL_BOMBARDMENT = "ORBITAL_BOMBARDMENT"
     SURGICAL_STRIKE = "SURGICAL_STRIKE"
     BLOCKADE = "BLOCKADE"
-
 class OrbitalCombatSystem:
     def __init__(self):
         self.bombardment_active = False
@@ -787,7 +794,6 @@ class EnhancedPiratesFeatures:
         # Random treasure scanning
         if random.random() < 0.005:  # 0.5% chance per update
             treasures = self.treasure_hunting.scan_for_treasures(player_position)
-
 # Trading and Economy System
 class Commodity:
     def __init__(self, name, base_price, category="general"):
@@ -1499,7 +1505,6 @@ class EnhancedCrewMember:
                         print(f"{self.name} improved their {skill_type} skill to {self.skills[skill_type]}!")
                     else:
                         print(f"{self.name} has mastered {skill_type} at maximum level!")
-
 class RealisticShipSystems:
     def __init__(self):
         # Initialize ship components
@@ -1767,7 +1772,6 @@ class ManufacturingProcess:
                 self.active = False
                 return True  # Production complete
         return False
-
 class EnhancedManufacturing:
     def __init__(self):
         # Define manufacturing recipes
@@ -1872,6 +1876,8 @@ class ManufacturingUI:
         self.active = False
         self.current_planet = None
         self.panel = Panel(parent=camera.ui, model='quad', scale=(0.8, 0.7), color=color.black66, enabled=False)
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
         self.title = Text(parent=self.panel, text='MANUFACTURING', position=(0, 0.32), scale=1.6, color=color.cyan)
         self.status_text = Text(parent=self.panel, text='', position=(-0.35, 0.15), scale=0.9, color=color.white)
         self.queue_text = Text(parent=self.panel, text='', position=(-0.35, -0.05), scale=0.9, color=color.white)
@@ -1880,6 +1886,8 @@ class ManufacturingUI:
     def show(self, planet_name):
         self.current_planet = planet_name
         ui_manager.show(self)
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
         self.update_display()
     
     def hide(self):
@@ -2199,7 +2207,6 @@ class WeatherSystem:
             if random.random() < 0.0008 * strength:
                 ship_systems.components[ComponentType.ENGINE].take_damage(2)
                 print("⚡ Ion storm disrupted engines!")
-
 class FactionMilitaryManager:
     """Manages military ships and territorial control for all factions"""
     
@@ -2849,7 +2856,6 @@ class DynamicContractSystem:
         
         self.available_contracts.append(contract)
         print(f"📋 New supply contract: {contract.title}")
-        
     def update_active_contracts(self):
         """Update progress on active contracts"""
         current_time = time.time()
@@ -2992,14 +2998,11 @@ class DynamicContractSystem:
             
         contract.status = ContractStatus.FAILED
         self.completed_contracts.append(contract)
-
 # Create global systems
 weather_system = WeatherSystem()
 military_manager = FactionMilitaryManager()
 dynamic_contracts = DynamicContractSystem()
-
 # ===== TRANSPORT SYSTEM ENUMS AND DATA STRUCTURES =====
-
 class MessageType(Enum):
     GOODS_REQUEST = "GOODS_REQUEST"
     PAYMENT = "PAYMENT"
@@ -3450,7 +3453,6 @@ class RotatingSkybox(Entity):
         if not paused:
             # Rotate the skybox slowly
             self.rotation_y += self.rotation_speed * time.dt
-
 # Create the rotating skybox
 skybox = RotatingSkybox()
 
@@ -3673,7 +3675,6 @@ class SpaceNPC(Entity):
                     random.uniform(-1, 1),
                     random.uniform(-2, 2)
                 )
-
 # Custom Space Controller
 class SpaceController(Entity):
     def __init__(self, **kwargs):
@@ -4086,7 +4087,6 @@ class SpaceController(Entity):
                     self._next_beacon_refresh = time.time() + 1.0
         except Exception:
             pass
-
     def _clear_course_beacons(self):
         try:
             for b in self._course_beacons:
@@ -4111,6 +4111,11 @@ class SpaceController(Entity):
 
 # Player setup with proper 3D movement
 player = SpaceController()
+if debug_show_ui_uuids:
+    try:
+        annotate_ui_tree(camera.ui)
+    except Exception:
+        pass
 
 # Create a pause menu
 pause_panel = Panel(
@@ -4164,6 +4169,8 @@ quit_button = Button(
     position=(0, -0.2),
     enabled=False
 )
+if debug_show_ui_uuids:
+    annotate_ui_tree(pause_panel)
 
 # Scene Management
 class GameState:
@@ -4263,7 +4270,6 @@ class TownController(Entity):
                         if self.intersects(entity).hit:
                             self.position = original_position
                             break
-
 class SceneManager:
     def __init__(self):
         self.current_state = GameState.SPACE
@@ -4283,6 +4289,8 @@ class SceneManager:
             color=color.white,
             enabled=False
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.interact_prompt)
         self._prompt_active = False
         self._prompt_target_kind = None
         self._prompt_show_threshold = 10.0  # show when closer than this
@@ -4577,7 +4585,6 @@ class SceneManager:
                 save_game()
             except Exception:
                 pass
-
 # Create scene manager
 scene_manager = SceneManager()
 
@@ -4837,7 +4844,6 @@ def save_game():
         with open(filename, 'w') as f:
             json.dump(game_state, f)
         print(f'Game saved to {filename}')
-
 def load_game():
     if not os.path.exists('saves'):
         print('No saves directory found')
@@ -5226,7 +5232,8 @@ landing_prompt = Panel(
     color=color.black66,
     enabled=False
 )
-
+if debug_show_ui_uuids:
+    _assign_uuid_label(landing_prompt)
 landing_text = Text(
     parent=landing_prompt,
     text='',
@@ -5234,6 +5241,8 @@ landing_text = Text(
     scale=1.5,
     position=(0, 0.05)
 )
+if debug_show_ui_uuids:
+    _assign_uuid_label(landing_text)
 
 land_button = Button(
     parent=landing_prompt,
@@ -5560,7 +5569,6 @@ class MessageShip(TransportShip):
             print(f"📬 Message delivered to {destination_name}")
             
         super().on_arrival()
-
 class CargoShip(TransportShip):
     """Ship carrying cargo between planets"""
     
@@ -5680,7 +5688,6 @@ class PaymentShip(TransportShip):
             except Exception:
                 pass
         super().on_arrival()
-
 class PirateRaider(TransportShip):
     """Pirate ship that hunts cargo ships based on intelligence"""
     
@@ -6275,7 +6282,6 @@ class CrewSystem:
             return 0.8
         else:
             return 0.7
-
 # Time and Mission System
 class TimeSystem:
     def __init__(self):
@@ -6358,7 +6364,6 @@ class Mission:
         self.reputation_change = reputation_change
         self.requirements = requirements or {}
         self.completed = False
-        
 class MissionSystem:
     def __init__(self):
         self.available_missions = []
@@ -6415,7 +6420,7 @@ class MissionSystem:
                 )
                 self.available_missions.append(mission)
 
-# ===== ENHANCED PLANET ECONOMIES =====
+# ===== ENHANCED PLANET ECONOMY =====
 
 class EnhancedPlanetEconomy:
     """Enhanced planet economy with realistic transport mechanics"""
@@ -6889,7 +6894,6 @@ class EnhancedPlanetEconomy:
             return base * surcharge
         except Exception:
             return base
-            
     def handle_goods_request(self, request):
         """Evaluate and respond to goods request"""
         commodity = request.commodity
@@ -7002,7 +7006,6 @@ class EnhancedPlanetEconomy:
                             self.planet_name, recipe_name, self.stockpiles, crew_effectiveness
                         )
                         break  # Only start one process at a time
-
 class PirateBaseEconomy(EnhancedPlanetEconomy):
     """Economy for pirate bases with contraband and raiding needs"""
     
@@ -7539,7 +7542,6 @@ class TransportContractRegistry:
         except Exception:
             pass
         return summaries
-
 contract_registry = TransportContractRegistry()
 
 # ===== TRADE LANE WAYPOINTS =====
@@ -7780,14 +7782,12 @@ def set_ui_uuid_labels_visible(visible: bool):
             _toggle_uuid_label(child, visible)
     except Exception:
         pass
-
 # ===== STRUCTURED DIAGNOSTICS =====
 import os
 import json
 import traceback
 import re
 from logging.handlers import RotatingFileHandler
-
 class Diagnostics:
     def __init__(self, log_dir: str = 'logs', file_name: str = 'game.log', max_bytes: int = 512_000, backup_count: int = 3):
         self.counters = {}
@@ -7922,7 +7922,6 @@ def _toggle_uuid_label(entity, visible: bool):
             _toggle_uuid_label(child, visible)
     except Exception:
         pass
-
 # Trading UI
 class TradingUI:
     def __init__(self):
@@ -8419,6 +8418,8 @@ class EventUI:
             color=color.dark_gray,
             enabled=False
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
         
         # Title
         self.title = Text(
@@ -8445,6 +8446,8 @@ class EventUI:
         ui_manager.hide_all()
         self.current_event = event
         ui_manager.show(self)
+        if debug_show_ui_uuids:
+            annotate_ui_tree(self.panel)
         # Update event info
         self.title.text = event['name'].upper()
         self.description.text = event['description']
@@ -8565,7 +8568,6 @@ class FactionUI:
             faction_text += f"{color_indicator} {faction.name}: {status} ({reputation:+d})\n"
         
         self.faction_list.text = faction_text
-
 # Crew Management UI
 class CrewUI:
     def __init__(self):
@@ -8723,6 +8725,8 @@ class MissionUI:
             color=color.black66,
             enabled=False
         )
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.panel)
         
         # Title
         self.title = Text(
@@ -8750,194 +8754,10 @@ class MissionUI:
             scale=1,
             color=color.light_gray
         )
+    def show(self):
+        ui_manager.show(self)
         if debug_show_ui_uuids:
-            _assign_uuid_label(self.panel)
-    def show(self):
-        ui_manager.show(self)
-        self.update_display()
-        
-    def hide(self):
-        ui_manager.hide(self)
-        
-    def update_display(self):
-        # Build available and active mission text from dynamic contracts
-        lines = []
-        self._available_index_to_id.clear()
-        try:
-            lines.append("AVAILABLE CONTRACTS:\n")
-            for i, c in enumerate(dynamic_contracts.available_contracts[:5], start=1):
-                self._available_index_to_id[i] = c.contract_id
-                dest = c.metadata.get('dest') if c.metadata else ''
-                lines.append(f"{i}. {c.title} → {dest}\n")
-            lines.append("\nACTIVE CONTRACTS:\n")
-            active = dynamic_contracts.active_contracts
-            for c in active:
-                remaining = int(max(0, c.metadata.get('time_remaining', 0))) if c.metadata else 0
-                reward = c.rewards.get('credits', 0) if isinstance(c.rewards, dict) else 0
-                lines.append(f"• {c.title} | Reward: {reward} cr | Time left: {remaining}m\n")
-        except Exception:
-            pass
-        self.mission_list.text = "".join(lines) if lines else "No contracts available."
-
-    def handle_input(self, key: str):
-        if not self.active:
-            return False
-        # Close on ESC
-        if key == 'escape':
-            self.hide()
-            return True
-        # Accept missions 1..5
-        try:
-            if key in ('1','2','3','4','5'):
-                idx = int(key)
-                cid = self._available_index_to_id.get(idx)
-                if cid:
-                    try:
-                        dynamic_contracts.accept_contract(cid)
-                    except Exception:
-                        pass
-                    self.update_display()
-                    return True
-        except Exception:
-            pass
-        # Abandon the first active contract
-        if key in ('a','A'):
-            try:
-                if dynamic_contracts.active_contracts:
-                    dynamic_contracts.abandon_contract(dynamic_contracts.active_contracts[0].contract_id)
-                    self.update_display()
-                    return True
-            except Exception:
-                pass
-        return False
-        
-# ===== MAP UI =====
-class MapUI:
-    def __init__(self):
-        self.active = False
-        self.panel = Panel(parent=camera.ui, model='quad', scale=(0.92, 0.9), color=color.black66, enabled=False)
-        self.title = Text(parent=self.panel, text='GALACTIC MAP', position=(0, 0.4), scale=1.8, color=color.yellow)
-        self.legend = Text(parent=self.panel, text='Lanes ▬▬  Blockade 🚫  Set course: number', position=(-0.6, 0.35), scale=0.8, color=color.light_gray)
-        self.map_text = Text(parent=self.panel, text='', position=(-0.6, 0.25), scale=0.8, color=color.white)
-        self.instructions = Text(parent=self.panel, text='1-9: Set course to listed planet • ESC: close', position=(0, -0.4), scale=0.9, color=color.light_gray)
-        self._index_to_planet = {}
-        
-    def show(self):
-        ui_manager.show(self)
-        self.update_display()
-        
-    def hide(self):
-        ui_manager.hide(self)
-        
-    def update_display(self):
-        # Build a simple list of planets with flags and distances
-        self._index_to_planet.clear()
-        lines = []
-        if scene_manager.current_state == GameState.SPACE and scene_manager.space_controller:
-            pos = scene_manager.space_controller.position
-        else:
-            pos = Vec3(0, 0, 0)
-        # Build/update graph once
-        try:
-            rebuild_planet_graph(k_neighbors=3)
-        except Exception:
-            pass
-        # Sort by distance
-        plist = sorted(planets, key=lambda p: (p.position - pos).length())
-        for i, p in enumerate(plist[:9]):
-            dist = int((p.position - pos).length())
-            name = getattr(p, 'name', f'Planet{i+1}')
-            blocked = '🚫' if military_manager.is_planet_blockaded(name) else ' '
-            self._index_to_planet[i+1] = name
-            lines.append(f"{i+1}. {name} {blocked}  ({dist}u)")
-        # Lanes summary
-        lanes = max(0, unified_transport_system.count_active_routes())
-        lines.append(f"\nActive trade lanes: {lanes}")
-        # Local planetary news: show most recent items from nearby/current planet
-        try:
-            if scene_manager.current_planet:
-                pname = scene_manager.current_planet.name
-            else:
-                # nearest planet by distance
-                pname = min(planets, key=lambda p: (p.position - pos).length()).name if planets else None
-            if pname:
-                knowledge = physical_communication.get_planet_knowledge(pname)
-                recent_news = knowledge.get('news', [])[-6:]
-                if recent_news:
-                    lines.append(f"\nNews at {pname}:")
-                    for n in recent_news:
-                        age_h = (time.time() - n.timestamp) / 3600
-                        badge = '✔️' if n.reliability >= 0.9 else ('~' if n.reliability >= 0.6 else '❓')
-                        lines.append(f" {badge} {n.headline} ({n.reliability:.0%}, {age_h:.1f}h)")
-        except Exception:
-            pass
-        # Highlight destinations of active contracts only if known locally
-        try:
-            if dynamic_contracts.active_contracts:
-                lines.append("Active contract targets:")
-                for c in dynamic_contracts.active_contracts[:5]:
-                    dest = c.metadata.get('dest') if c.metadata else None
-                    if dest:
-                        origin = getattr(scene_manager.current_planet, 'name', None)
-                        knowledge = physical_communication.get_planet_knowledge(origin) if origin else {'news': []}
-                        knows_dest = any((dest in n.details) or (dest in n.headline) for n in knowledge.get('news', []))
-                        label = dest if knows_dest else "Unknown"
-                        lines.append(f" • {c.title} → {label}")
-                        # Show route only if known
-                        if knows_dest:
-                            if not origin and planets:
-                                origin = min(planets, key=lambda p: (p.position - pos).length()).name
-                            route = find_route(origin, dest)
-                            if route:
-                                lines.append(f"    Route: {' -> '.join(route)}")
-        except Exception:
-            pass
-        # Threat: show local threat based on physically known news for nearest/current planet
-        try:
-            local_planet = getattr(scene_manager.current_planet, 'name', None)
-            if not local_planet and planets:
-                local_planet = min(planets, key=lambda p: (p.position - pos).length()).name
-            local_threat = physical_communication.estimate_planet_threat(local_planet) if local_planet else 'UNKNOWN'
-            lines.append(f"Local threat @ {local_planet or 'Unknown'}: {local_threat}")
-        except Exception:
-            lines.append(f"Local threat: UNKNOWN")
-        self.map_text.text = "\n".join(lines)
-        
-    def handle_input(self, key):
-        if not self.active:
-            return False
-        if key in '123456789':
-            idx = int(key)
-            if idx in self._index_to_planet:
-                target = self._index_to_planet[idx]
-                print(f"🧭 Course set to {target}")
-                try:
-                    # Build multi-hop route from current/nearest planet to target
-                    if scene_manager.current_planet:
-                        origin = scene_manager.current_planet.name
-                    else:
-                        # Use nearest planet to player as origin
-                        pos = scene_manager.space_controller.position if scene_manager.current_state == GameState.SPACE else Vec3(0, 0, 0)
-                        origin = min(planets, key=lambda p: (p.position - pos).length()).name if planets else target
-                    # If the player hasn't physically learned about the target, only set direct course without steps
-                    knowledge = physical_communication.get_planet_knowledge(origin)
-                    knows_target = any((target in n.details) or (target in n.headline) for n in knowledge.get('news', []))
-                    route = find_route(origin, target) if knows_target else [target]
-                    if not route:
-                        route = [target]
-                    player.course_route = route
-                    player.course_route_index = 0
-                    player.autopilot = True
-                    if not knows_target:
-                        tips_hud.show_tip("Course set without known route. Visit nearby planets or relay to learn routes.")
-                except Exception:
-                    pass
-                self.update_display()
-                return True
-        return False
-        
-    def show(self):
-        ui_manager.show(self)
+            annotate_ui_tree(self.panel)
         self.update_display()
         
     def hide(self):
@@ -9001,7 +8821,7 @@ class MapUI:
 
         self.mission_list.text = "".join(lines)
         
-    def handle_input(self, key):
+    def handle_input(self, key: str):
         if not self.active:
             return False
             
@@ -9084,6 +8904,8 @@ ui_manager.register(diagnostics_ui)
 class TipsHUD:
     def __init__(self):
         self.text = Text(parent=camera.ui, text='', position=(-0.75, -0.45), scale=0.8, color=color.light_gray)
+        if debug_show_ui_uuids:
+            _assign_uuid_label(self.text)
         self._expire = 0
 
     def show_tip(self, message: str, duration: float = 5.0):
@@ -9095,7 +8917,6 @@ class TipsHUD:
         if self.text.enabled and time.time() > self._expire:
             self.text.text = ''
             self.text.enabled = False
-
 tips_hud = TipsHUD()
 
 def update():
@@ -9373,13 +9194,10 @@ try:
     sky = Entity(model='sphere', scale=1000, double_sided=True, color=color.black)
 except Exception:
     pass
-
 # Initialize scene manager after all entities are created
 scene_manager.initialize_space()
-
 # Initialize military and contract systems
 military_manager.initialize_military_presence()
-
 # Game state
 paused = False
 
@@ -9743,7 +9561,6 @@ def input(key):
                 print("🔧 No spare parts available for repairs")
         else:
             print("🔧 All systems operating normally")
-    
     # ===== ENHANCED PIRATES! FEATURES CONTROLS =====
     
     if key == 'v' and not paused:
