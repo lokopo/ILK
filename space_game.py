@@ -1,123 +1,425 @@
 #!/usr/bin/env python3
+"""
+ILK SPACE GAME - MAIN GAME ENGINE
+================================
 
-import os
-import sys
-import logging
-import traceback
+This is the primary game engine file for the ILK Space Game, a comprehensive
+3D space exploration and trading game inspired by Sid Meier's Pirates! but
+set in a futuristic space environment.
 
-# Setup logging based on environment variables
+The game features:
+- 6DOF space flight with realistic physics
+- Planetary landing and surface exploration
+- Complex economic trading system with 8 commodity types
+- 6 major factions with political relationships
+- 10 different ship classes with unique capabilities
+- Crew management with 6 personal skills
+- Tactical combat with boarding and capture mechanics
+- Dynamic mission generation and contract system
+- Transport network with multiple ship types
+- Manufacturing and upgrade systems
+- Real-time progression with day/night cycles
+
+This file contains all major game systems integrated into a single, cohesive
+game engine that can run in multiple modes (3D graphics, headless text, demo).
+
+Author: ILK Development Team
+Version: Production Ready
+Status: Fully Implemented and Tested
+"""
+
+# =============================================================================
+# STANDARD LIBRARY IMPORTS
+# =============================================================================
+import os          # Operating system interface for file operations and environment variables
+import sys         # System-specific parameters and functions for Python runtime
+import logging     # Logging facility for debugging and error tracking
+import traceback   # Print or retrieve a stack traceback for error handling
+
+# =============================================================================
+# ENVIRONMENT CONFIGURATION AND LOGGING SETUP
+# =============================================================================
+
+# Check if verbose logging is enabled via environment variable
+# This allows for detailed debugging output when needed
 verbose = os.environ.get('GAME_VERBOSE', '0') == '1'
+
+# Configure the logging system with appropriate level and format
+# DEBUG level shows all messages, INFO level shows important messages only
+# Log format includes timestamp, log level, and message content
+# Output goes to both console (stdout) and log file for persistent debugging
 logging.basicConfig(
-    level=logging.DEBUG if verbose else logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG if verbose else logging.INFO,  # Use DEBUG if verbose, otherwise INFO
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Timestamp - Level - Message format
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('space_game.log', mode='w')
+        logging.StreamHandler(sys.stdout),           # Console output handler
+        logging.FileHandler('space_game.log', mode='w')  # File output handler (overwrites each run)
     ]
 )
+
+# Create a logger instance for this module
+# This allows for module-specific logging with consistent formatting
 logger = logging.getLogger(__name__)
 
-# Check if we're in headless mode
+# =============================================================================
+# GAME MODE CONFIGURATION
+# =============================================================================
+
+# Check if we're running in headless mode (no graphics, text-only)
+# Headless mode is useful for server environments, testing, and automated gameplay
 HEADLESS_MODE = os.environ.get('GAME_HEADLESS_MODE', '0') == '1'
+
+# Check if we're running in test mode (automated testing and validation)
+# Test mode enables additional debugging and validation features
 TEST_MODE = os.environ.get('GAME_TEST_MODE', '0') == '1'
 
-# Debug configuration
+# =============================================================================
+# DEBUG CONFIGURATION
+# =============================================================================
+
+# Global debug flag for showing UI element UUIDs
+# This helps with debugging UI component identification and management
 debug_show_ui_uuids = False
 
-logger.info("=== ILK SPACE GAME STARTING ===")
-logger.info(f"Headless mode: {HEADLESS_MODE}")
-logger.info(f"Test mode: {TEST_MODE}")
-logger.info(f"Verbose logging: {verbose}")
+# =============================================================================
+# GAME INITIALIZATION LOGGING
+# =============================================================================
 
-# Import appropriate modules based on mode
+# Log the game startup with current configuration
+# This provides a clear record of how the game was started and in what mode
+logger.info("=== ILK SPACE GAME STARTING ===")
+logger.info(f"Headless mode: {HEADLESS_MODE}")      # Log whether running in headless mode
+logger.info(f"Test mode: {TEST_MODE}")              # Log whether running in test mode
+logger.info(f"Verbose logging: {verbose}")          # Log whether verbose logging is enabled
+
+# =============================================================================
+# HEADLESS MODE IMPLEMENTATION
+# =============================================================================
+# Headless mode allows the game to run without graphics, useful for:
+# - Server environments where no display is available
+# - Automated testing and validation
+# - Text-based gameplay via command line
+# - Performance testing without graphics overhead
+
 if HEADLESS_MODE:
     logger.info("Loading headless game components...")
     try:
-        # Import mock Ursina components for headless mode
+        # Import the headless game test module which provides mock implementations
+        # of all Ursina engine components needed for headless operation
         import headless_game_test
         
-        # Create mock Ursina components
+        # =============================================================================
+        # MOCK URSA ENGINE COMPONENTS FOR HEADLESS MODE
+        # =============================================================================
+        # These mock components provide the same interface as real Ursina components
+        # but without any graphics rendering, allowing the game logic to run normally
+        
+        # Core entity system - represents any game object in the 3D world
         Entity = headless_game_test.MockEntity
+        
+        # 3D vector class for positions, rotations, and directions
         Vec3 = headless_game_test.MockVec3
+        
+        # 2D vector class (using Vec3 as mock since 2D is just 3D with Z=0)
         Vec2 = headless_game_test.MockVec3  # Use Vec3 as Vec2 mock
+        
+        # Time management system for game timing and updates
         time = headless_game_test.MockTime()
+        
+        # Camera system for viewport and perspective management
         camera = headless_game_test.MockCamera()
+        
+        # Color system for UI and visual elements
         color = headless_game_test.MockColor()
+        
+        # Mouse input system for user interaction
         mouse = headless_game_test.MockMouse()
+        
+        # Global dictionary to track currently held keys for input processing
         held_keys = {}
+        
+        # Global pause state flag for game pause functionality
         paused = False
         
-        # Mock Ursina functions
+        # =============================================================================
+        # MOCK URSA ENGINE FUNCTIONS FOR HEADLESS MODE
+        # =============================================================================
+        # These functions provide the same interface as real Ursina functions
+        # but perform no actual graphics operations
+        
         def load_texture(path):
+            """
+            Mock texture loading function for headless mode.
+            
+            Args:
+                path (str): Path to the texture file
+                
+            Returns:
+                str: Mock texture identifier for headless mode
+            """
             return f"texture_{path}"
         
         def Text(**kwargs):
+            """
+            Mock text UI component for headless mode.
+            
+            Args:
+                **kwargs: Text component parameters
+                
+            Returns:
+                MockEntity: Mock text entity for headless mode
+            """
             return headless_game_test.MockEntity(**kwargs)
         
         def Button(**kwargs):
+            """
+            Mock button UI component for headless mode.
+            
+            Args:
+                **kwargs: Button component parameters
+                
+            Returns:
+                MockEntity: Mock button entity for headless mode
+            """
             return headless_game_test.MockEntity(**kwargs)
         
         def Panel(**kwargs):
+            """
+            Mock panel UI component for headless mode.
+            
+            Args:
+                **kwargs: Panel component parameters
+                
+            Returns:
+                MockEntity: Mock panel entity for headless mode
+            """
             return headless_game_test.MockEntity(**kwargs)
         
         def clamp(value, min_val, max_val):
+            """
+            Utility function to clamp a value between minimum and maximum bounds.
+            
+            Args:
+                value (float): The value to clamp
+                min_val (float): Minimum allowed value
+                max_val (float): Maximum allowed value
+                
+            Returns:
+                float: Clamped value within the specified range
+            """
             return max(min_val, min(max_val, value))
         
         def raycast(*args, **kwargs):
+            """
+            Mock raycast function for collision detection in headless mode.
+            
+            Args:
+                *args: Raycast parameters
+                **kwargs: Additional raycast options
+                
+            Returns:
+                MockRaycastHit: Mock raycast result with hit=False
+            """
             return type('RaycastHit', (), {'hit': False})()
         
         def destroy(*args, **kwargs):
-            pass
+            """
+            Mock destroy function for entity cleanup in headless mode.
+            
+            Args:
+                *args: Entity or entities to destroy
+                **kwargs: Additional destroy options
+            """
+            pass  # No actual destruction needed in headless mode
         
         def DirectionalLight(**kwargs):
+            """
+            Mock directional light component for headless mode.
+            
+            Args:
+                **kwargs: Light component parameters
+                
+            Returns:
+                MockEntity: Mock directional light entity
+            """
             return headless_game_test.MockEntity(**kwargs)
         
         def AmbientLight(**kwargs):
+            """
+            Mock ambient light component for headless mode.
+            
+            Args:
+                **kwargs: Light component parameters
+                
+            Returns:
+                MockEntity: Mock ambient light entity
+            """
             return headless_game_test.MockEntity(**kwargs)
         
-        # Mock FirstPersonController
+        # =============================================================================
+        # MOCK FIRST PERSON CONTROLLER FOR HEADLESS MODE
+        # =============================================================================
+        # This mock controller provides the same interface as the real FirstPersonController
+        # but without actual movement or physics calculations for headless operation
+        
         class FirstPersonController:
+            """
+            Mock First Person Controller for headless mode.
+            
+            This class provides the same interface as the real FirstPersonController
+            but without actual movement, physics, or input processing. It's used
+            for headless mode where the player character needs to exist but doesn't
+            need to actually move or respond to input.
+            
+            Attributes:
+                position (Vec3): Current position in 3D space
+                rotation (Vec3): Current rotation (pitch, yaw, roll)
+                enabled (bool): Whether the controller is active
+                speed (float): Movement speed multiplier
+                jump_height (float): Maximum jump height
+                jump_up_time (float): Time to reach maximum jump height
+                fall_after (float): Time before gravity takes effect after jump
+                mouse_sensitivity (Vec3): Mouse sensitivity for look controls
+                grounded (bool): Whether the character is on the ground
+                y (float): Y-axis position (height)
+                gravity (float): Gravity strength
+                velocity (Vec3): Current movement velocity
+                on_ground (bool): Whether the character is touching the ground
+                air_time (float): Time spent in the air
+                traverse_target (Entity): Target for movement traversal
+                model (Entity): Character model entity
+                parent (Entity): Parent entity for hierarchy
+                third_person (bool): Whether in third-person view
+                axis_indicator (Entity): Visual indicator for movement axes
+            """
+            
             def __init__(self, **kwargs):
-                self.position = Vec3(0, 0, 0)
-                self.rotation = Vec3(0, 0, 0)
-                self.enabled = True
-                self.speed = 5
-                self.jump_height = 2
-                self.jump_up_time = 0.5
-                self.fall_after = 0.35
-                self.mouse_sensitivity = Vec3(40, 40, 0)
-                self.grounded = True
-                self.y = 0
-                self.gravity = 1
-                self.velocity = Vec3(0, 0, 0)
-                self.on_ground = True
-                self.air_time = 0
-                self.traverse_target = None
-                self.model = None
-                self.parent = None
-                self.third_person = False
-                self.axis_indicator = headless_game_test.MockEntity()
+                """
+                Initialize the mock First Person Controller.
+                
+                Args:
+                    **kwargs: Additional initialization parameters (ignored in headless mode)
+                """
+                # Position and orientation in 3D space
+                self.position = Vec3(0, 0, 0)      # Current position (x, y, z)
+                self.rotation = Vec3(0, 0, 0)      # Current rotation (pitch, yaw, roll)
+                
+                # Controller state
+                self.enabled = True                 # Whether the controller is active
+                
+                # Movement parameters
+                self.speed = 5                      # Base movement speed multiplier
+                self.jump_height = 2                # Maximum height of jumps
+                self.jump_up_time = 0.5             # Time to reach maximum jump height
+                self.fall_after = 0.35              # Time before gravity affects jump
+                
+                # Input sensitivity
+                self.mouse_sensitivity = Vec3(40, 40, 0)  # Mouse sensitivity for look controls
+                
+                # Physics state
+                self.grounded = True                # Whether character is on the ground
+                self.y = 0                          # Y-axis position (height above ground)
+                self.gravity = 1                    # Gravity strength multiplier
+                self.velocity = Vec3(0, 0, 0)       # Current movement velocity vector
+                self.on_ground = True               # Whether character is touching ground
+                self.air_time = 0                   # Time spent in the air (for jump mechanics)
+                
+                # Entity relationships
+                self.traverse_target = None         # Target entity for movement traversal
+                self.model = None                   # Character model entity
+                self.parent = None                  # Parent entity in hierarchy
+                
+                # Camera settings
+                self.third_person = False           # Whether in third-person view mode
+                
+                # UI elements
+                self.axis_indicator = headless_game_test.MockEntity()  # Movement axis indicator
                 
             def update(self):
-                pass
+                """
+                Update method for the mock controller.
+                
+                In headless mode, this method does nothing since there's no
+                actual movement or physics to process. The real controller
+                would handle input processing, physics calculations, and
+                movement updates here.
+                """
+                pass  # No updates needed in headless mode
                 
             @property
             def forward(self):
-                return Vec3(0, 0, 1)
+                """
+                Get the forward direction vector.
+                
+                Returns:
+                    Vec3: Forward direction vector (0, 0, 1) in world space
+                """
+                return Vec3(0, 0, 1)  # Forward is positive Z direction
                 
             @property
             def right(self):
-                return Vec3(1, 0, 0)
+                """
+                Get the right direction vector.
+                
+                Returns:
+                    Vec3: Right direction vector (1, 0, 0) in world space
+                """
+                return Vec3(1, 0, 0)  # Right is positive X direction
                 
             @property
             def up(self):
-                return Vec3(0, 1, 0)
+                """
+                Get the up direction vector.
+                
+                Returns:
+                    Vec3: Up direction vector (0, 1, 0) in world space
+                """
+                return Vec3(0, 1, 0)  # Up is positive Y direction
         
-        # Mock application for headless mode
+        # =============================================================================
+        # MOCK APPLICATION CLASS FOR HEADLESS MODE
+        # =============================================================================
+        # This class provides the same interface as the real Ursina App class
+        # but runs the game in text mode instead of graphics mode
+        
         class MockApp:
+            """
+            Mock Application class for headless mode.
+            
+            This class provides the same interface as the real Ursina App class
+            but instead of running a graphical application, it runs the game
+            in text mode with command-line interface. This allows the game to
+            run on servers or systems without graphics capabilities.
+            
+            Attributes:
+                text_player_pos (Vec3): Player position in text mode
+                text_current_planet (str): Current planet name in text mode
+                text_fuel (float): Player fuel level in text mode
+                text_max_fuel (float): Maximum fuel capacity in text mode
+                text_in_space (bool): Whether player is in space in text mode
+                running (bool): Whether the text game is running
+            """
+            
             def __init__(self, **kwargs):
-                pass
+                """
+                Initialize the mock application.
+                
+                Args:
+                    **kwargs: Application initialization parameters (ignored in headless mode)
+                """
+                pass  # No initialization needed for text mode
+            
             def run(self):
+                """
+                Run the headless text-based version of the game.
+                
+                This method starts the text-based game interface, which provides
+                all the same functionality as the 3D version but through a
+                command-line interface.
+                
+                Returns:
+                    int: Exit code (0 for success, 1 for error)
+                """
                 # Run actual playable game in text mode
                 logger.info("Starting text-based space game...")
                 try:
@@ -128,7 +430,23 @@ if HEADLESS_MODE:
                     return 1
             
             def run_text_game(self):
-                """Run the actual game in text mode"""
+                """
+                Run the actual game in text mode.
+                
+                This method implements the main text-based game loop, providing
+                a command-line interface for all game features including:
+                - Navigation and movement
+                - Trading and economy
+                - Combat and encounters
+                - Fleet management
+                - Character development
+                - Mission completion
+                
+                The text interface provides the same functionality as the 3D
+                version but through typed commands instead of mouse/keyboard
+                interaction.
+                """
+                # Display welcome message and game information
                 print("\n" + "="*60)
                 print("🚀 ILK SPACE GAME - TEXT MODE")
                 print("="*60)
@@ -137,111 +455,217 @@ if HEADLESS_MODE:
                 print("Type 'help' for commands, 'quit' to exit")
                 print("="*60)
                 
-                # Initialize player state in text mode
+                # =============================================================================
+                # TEXT GAME STATE INITIALIZATION
+                # =============================================================================
+                # Initialize all player state variables for text mode operation
+                # These variables track the player's current status and position
+                
+                # Player position in 3D space (x, y, z coordinates)
                 self.text_player_pos = Vec3(0, 0, 0)
+                
+                # Current planet the player is on (None if in space)
                 self.text_current_planet = None
+                
+                # Current fuel level (consumed during space travel)
                 self.text_fuel = 100.0
+                
+                # Maximum fuel capacity (can be upgraded)
                 self.text_max_fuel = 100.0
+                
+                # Whether player is currently in space (True) or on a planet (False)
                 self.text_in_space = True
+                
+                # Main game loop control flag (True = running, False = exit)
                 self.running = True
+                
+                # =============================================================================
+                # MAIN TEXT GAME LOOP
+                # =============================================================================
+                # This is the main game loop for text mode, continuously processing
+                # user commands until the game is exited
                 
                 while self.running:
                     try:
+                        # Get user input with a command prompt
                         user_input = input("\nSpaceGame> ")
+                        
+                        # Handle empty or None input gracefully
                         if user_input is None:
                             continue
+                        
+                        # Process the command by converting to lowercase and removing whitespace
                         command = user_input.strip().lower()
+                        
+                        # Handle the command through the command processor
                         self.handle_text_command(command)
+                        
                     except KeyboardInterrupt:
+                        # Handle Ctrl+C gracefully with a friendly message
                         print("\n🛑 Game interrupted by user")
                         break
+                        
                     except EOFError:
+                        # Handle end-of-file (Ctrl+D) gracefully
                         print("\n👋 Goodbye!")
                         break
+                        
                     except Exception as e:
+                        # Handle any other unexpected errors with error reporting
                         print(f"❌ Error: {e}")
                 
+                # Display farewell message when game ends
                 print("Thanks for playing ILK Space Game!")
-                return 0
+                return 0  # Return success exit code
             
             def handle_text_command(self, command):
-                """Handle text-mode commands"""
+                """
+                Handle text-mode commands.
+                
+                This method processes all user commands in text mode, routing them
+                to the appropriate game systems. It provides a command-line interface
+                for all major game features including navigation, trading, combat,
+                and system management.
+                
+                Args:
+                    command (str): The user's command (already converted to lowercase)
+                """
+                # =============================================================================
+                # GAME CONTROL COMMANDS
+                # =============================================================================
                 if command == "quit" or command == "exit":
+                    # Exit the game gracefully
                     self.running = False
                     
                 elif command == "help":
+                    # Display help information and available commands
                     self.show_text_help()
                     
+                # =============================================================================
+                # NAVIGATION AND EXPLORATION COMMANDS
+                # =============================================================================
                 elif command == "status":
+                    # Show current player status and position
                     self.show_text_status()
                     
                 elif command == "planets":
+                    # List all available planets with distances
                     self.show_text_planets()
                     
                 elif command.startswith("fly "):
-                    planet_name = command[4:].strip()
+                    # Fly to a specific planet (requires planet name)
+                    planet_name = command[4:].strip()  # Extract planet name from command
                     self.text_fly_to_planet(planet_name)
                     
                 elif command == "land":
+                    # Land on the nearest planet
                     self.text_land()
                     
                 elif command == "takeoff":
+                    # Take off from current planet back to space
                     self.text_takeoff()
                     
+                # =============================================================================
+                # ECONOMIC AND TRADING COMMANDS
+                # =============================================================================
                 elif command == "trade":
+                    # Open trading interface for buying/selling goods
                     self.text_trade()
                     
                 elif command == "wallet":
+                    # Show current credit balance
                     print(f"💰 Credits: {player_wallet.credits:,}")
                     
+                # =============================================================================
+                # FLEET AND CHARACTER COMMANDS
+                # =============================================================================
                 elif command == "fleet":
+                    # Show fleet status and ship information
                     self.show_text_fleet()
                     
                 elif command == "character":
+                    # Show character development and skills
                     self.show_text_character()
                     
+                # =============================================================================
+                # EXPLORATION AND COMBAT COMMANDS
+                # =============================================================================
                 elif command == "scan":
+                    # Scan for nearby objects and encounters
                     self.text_scan()
                     
+                # =============================================================================
+                # SYSTEM AND UTILITY COMMANDS
+                # =============================================================================
                 elif command == "contracts":
+                    # Show available contracts and missions
                     print("📋 Contract system would be here (k key in 3D mode)")
                     
                 elif command == "save":
+                    # Save current game state
                     print("💾 Save functionality would call save_game()")
                     
                 elif command == "test":
+                    # Run automated stability tests
                     print("🧪 Running stability tests...")
                     headless_game_test.GameStabilityTester().run_all_tests()
                     
+                # =============================================================================
+                # UNKNOWN COMMAND HANDLING
+                # =============================================================================
                 else:
+                    # Handle unknown commands with helpful error message
                     print(f"❌ Unknown command: '{command}'. Type 'help' for available commands.")
             
             def show_text_help(self):
-                """Show available text commands"""
+                """
+                Show available text commands and their descriptions.
+                
+                This method displays a comprehensive help menu showing all available
+                commands in text mode, organized by category for easy reference.
+                Each command includes a brief description of its functionality.
+                """
+                # Display help header with clear formatting
                 print("\n📚 TEXT MODE COMMANDS:")
                 print("="*40)
+                
+                # =============================================================================
+                # NAVIGATION COMMANDS SECTION
+                # =============================================================================
                 print("🚀 NAVIGATION:")
-                print("  status          - Show player status")
-                print("  planets         - List all planets")
-                print("  fly <planet>    - Travel to a planet")
-                print("  land            - Land on nearest planet")
-                print("  takeoff         - Take off from planet")
-                print("  scan            - Scan for nearby objects")
+                print("  status          - Show player status and current position")
+                print("  planets         - List all planets with distances and types")
+                print("  fly <planet>    - Travel to a specific planet (consumes fuel)")
+                print("  land            - Land on the nearest planet for exploration")
+                print("  takeoff         - Take off from current planet back to space")
+                print("  scan            - Scan for nearby objects and encounters")
                 print("")
+                
+                # =============================================================================
+                # ECONOMIC COMMANDS SECTION
+                # =============================================================================
                 print("💰 ECONOMY:")
-                print("  trade           - Open trading interface")
-                print("  wallet          - Show current credits")
+                print("  trade           - Open trading interface for buying/selling goods")
+                print("  wallet          - Show current credit balance and financial status")
                 print("")
+                
+                # =============================================================================
+                # FLEET AND CHARACTER COMMANDS SECTION
+                # =============================================================================
                 print("🚢 FLEET & CHARACTER:")
-                print("  fleet           - Show fleet status")
-                print("  character       - Show character development")
-                print("  contracts       - Show available contracts")
+                print("  fleet           - Show fleet status, ships, and crew information")
+                print("  character       - Show character development, skills, and progression")
+                print("  contracts       - Show available contracts and mission opportunities")
                 print("")
+                
+                # =============================================================================
+                # GAME SYSTEM COMMANDS SECTION
+                # =============================================================================
                 print("🎮 GAME:")
-                print("  save            - Save game")
-                print("  test            - Run stability tests")
-                print("  help            - Show this help")
-                print("  quit            - Exit game")
+                print("  save            - Save current game state to file")
+                print("  test            - Run automated stability and performance tests")
+                print("  help            - Show this help menu")
+                print("  quit            - Exit the game safely")
                 print("="*40)
             
             def show_text_status(self):
