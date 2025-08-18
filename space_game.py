@@ -79,7 +79,7 @@ TEST_MODE = os.environ.get('GAME_TEST_MODE', '0') == '1'
 
 # Global debug flag for showing UI element UUIDs
 # This helps with debugging UI component identification and management
-debug_show_ui_uuids = False
+debug_show_ui_uuids = True
 
 # =============================================================================
 # GAME INITIALIZATION LOGGING
