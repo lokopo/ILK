@@ -92,25 +92,44 @@ class MockApp:
     def run(self):
         pass
 
+class MockColorValue:
+    """Mock Ursina color supporting tint() and basic arithmetic used by UI code."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def tint(self, amount=0):
+        return MockColorValue(f"{self.name}_tint_{amount}")
+
+    def __mul__(self, other):
+        if isinstance(other, MockColorValue):
+            return MockColorValue(f"({self.name}*{other.name})")
+        return MockColorValue(f"{self.name}*{other}")
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __add__(self, other):
+        other_name = getattr(other, 'name', other)
+        return MockColorValue(f"({self.name}+{other_name})")
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+
 class MockColor:
     def __init__(self):
-        self.red = "red"
-        self.green = "green"
-        self.blue = "blue"
-        self.white = "white"
-        self.yellow = "yellow"
-        self.orange = "orange"
-        self.cyan = "cyan"
-        self.light_gray = "light_gray"
-        self.dark_gray = "dark_gray"
-        self.gray = "gray"
-        self.black = "black"
-        self.black66 = "black66"
-        self.azure = MockAzure()
+        for name in (
+            'red', 'green', 'blue', 'white', 'yellow', 'orange', 'cyan',
+            'light_gray', 'dark_gray', 'gray', 'black', 'black66',
+            'azure', 'brown', 'magenta', 'violet',
+        ):
+            setattr(self, name, MockColorValue(name))
+
 
 class MockAzure:
     def tint(self, amount):
-        return "azure_tinted"
+        return MockColorValue(f"azure_tint_{amount}")
 
 class MockCamera:
     def __init__(self):

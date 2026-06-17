@@ -24,8 +24,8 @@ This file contains all major game systems integrated into a single, cohesive
 game engine that can run in multiple modes (3D graphics, headless text, demo).
 
 Author: ILK Development Team
-Version: Production Ready
-Status: Fully Implemented and Tested
+Version: 0.9.x (Playable Alpha)
+Status: Active development — engine smoke-tested
 """
 
 # =============================================================================
@@ -119,6 +119,12 @@ if HEADLESS_MODE:
         
         # 3D vector class for positions, rotations, and directions
         Vec3 = headless_game_test.MockVec3
+        
+        # 4D vector class for colors with alpha
+        class MockVec4:
+            def __init__(self, x=0, y=0, z=0, w=1):
+                self.x, self.y, self.z, self.w = float(x), float(y), float(z), float(w)
+        Vec4 = MockVec4
         
         # 2D vector class (using Vec3 as mock since 2D is just 3D with Z=0)
         Vec2 = headless_game_test.MockVec3  # Use Vec3 as Vec2 mock
@@ -816,10 +822,6 @@ if HEADLESS_MODE:
         # Set up mock app
         app = MockApp()
         
-        # Add missing color attributes to avoid runtime errors
-        color.dark_gray = "dark_gray"
-        color.gray = "gray"
-        
         logger.info("Headless components loaded successfully")
         GRAPHICS_AVAILABLE = False
         
@@ -1514,7 +1516,8 @@ class PlanetEconomy:
         # Increase local security budget over time when attacked
         if self.recent_attacks % 3 == 0:
             # Hire more security which can spawn additional escorts for local shipments indirectly
-            self.hire_security('HIGH')
+            wealth_level = sum(self.stockpiles.values()) * 10 + getattr(self, 'population', 100000)
+            self.hire_security('HIGH', wealth_level)
         
     def get_available_supply(self, commodity):
         """How much of this commodity can be purchased"""
@@ -6912,6 +6915,8 @@ class EnhancedPlanetEconomy:
         self.outgoing_requests = {}
         self.expected_deliveries = {}
         self.credits = random.randint(10000, 50000)
+        self.recent_attacks = 0
+        self.security_level = 0
         # Realistic constraints
         self.minerals_reserve = random.randint(200_000, 800_000)
         self.fuel_reserve = random.randint(100_000, 400_000)
@@ -7297,6 +7302,37 @@ class EnhancedPlanetEconomy:
                     suppliers.append(planet)
                     
         return suppliers
+
+    def hire_security(self, security_level, wealth=None):
+        """Hire security forces using planet credits and stockpiles."""
+        if wealth is None:
+            wealth = self.credits + sum(self.stockpiles.values()) * 5
+        security_costs = {
+            "LOW": wealth * 0.02,
+            "MEDIUM": wealth * 0.05,
+            "HIGH": wealth * 0.08,
+            "EMERGENCY": wealth * 0.12,
+        }
+        cost = int(security_costs.get(security_level, wealth * 0.05))
+        if wealth <= cost * 10:
+            return
+        for commodity in ("weapons", "technology", "fuel"):
+            if commodity in self.stockpiles and self.stockpiles[commodity] > 10:
+                reduction = min(cost // 100, int(self.stockpiles[commodity] // 2))
+                self.stockpiles[commodity] -= reduction
+                cost -= reduction * 50
+                if cost <= 0:
+                    break
+        self.credits = max(0, self.credits - max(0, cost // 2))
+        self.security_level = min(100, self.security_level + (20 if security_level == "HIGH" else 10))
+        print(f"🛡️ {self.planet_name} hired {security_level} security (Level: {self.security_level})")
+
+    def record_pirate_attack(self):
+        """Record when planet is attacked by pirates."""
+        self.recent_attacks += 1
+        print(f"⚠️ {self.planet_name} records pirate attack! (Recent attacks: {self.recent_attacks})")
+        if self.recent_attacks % 3 == 0:
+            self.hire_security('HIGH', self.credits + sum(self.stockpiles.values()) * 5)
     
     def receive_message(self, message_type, payload):
         """Process incoming message"""
@@ -10426,5 +10462,22 @@ try:
 except Exception as e:
     print(f"⚠️ Some rendering optimizations failed: {e}")
 
-# Run the game
-app.run() 
+# Run the game or execute an automated smoke test (headless simulation ticks)
+if os.environ.get('GAME_SMOKE_TEST', '0') == '1':
+    ticks = int(os.environ.get('GAME_SMOKE_TICKS', '600'))
+    print(f"Running smoke test ({ticks} simulation ticks)...")
+    dt = getattr(time, 'dt', 0.016)
+    for tick in range(ticks):
+        try:
+            if hasattr(time, 'advance'):
+                time.advance(dt)
+            update()
+        except Exception as exc:
+            print(f"SMOKE TEST FAILED at tick {tick}: {exc}")
+            traceback.print_exc()
+            sys.exit(1)
+    cargo_count = len(getattr(unified_transport_system, 'cargo_ships', []))
+    print(f"SMOKE TEST PASSED ({ticks} ticks, {len(planets)} planets, {cargo_count} cargo ships)")
+    sys.exit(0)
+
+app.run()

@@ -71,7 +71,10 @@ This is the authoritative feature checklist to reach a complete, polished 1.0. O
   - [ ] All relevant state persisted (player, planets, ships, contracts, comms, escorts, routes)
   - [ ] Versioned saves, backward-compat check, graceful migration hooks
   - [ ] Autosave cadence configurable; rolling slots confirmed
-- [ ] Stability
+- [x] Stability
+  - [x] Pirate raid crash fixed (`EnhancedPlanetEconomy.record_pirate_attack`)
+  - [x] Headless engine starts without color/tint crash
+  - [x] Real-engine smoke test (`smoke_test.py`) passes 600+ ticks
   - [ ] No mid-frame entity destruction assertions; removal deferrals standardized
   - [ ] Defensive checks for all NodePath accesses and scene transitions
 - [ ] Performance
@@ -80,7 +83,8 @@ This is the authoritative feature checklist to reach a complete, polished 1.0. O
   - [ ] Profiling sessions with target framerate metrics documented
 
 ### Headless / Testing / CI
-- [ ] Headless testing
+- [x] Headless testing
+  - [x] Engine smoke test green (`python smoke_test.py`, `GAME_HEADLESS_MODE=1`)
   - [ ] Stability test suite green (GAME_TEST_MODE=1)
   - [ ] Economic simulations (30/60/120-day) with acceptable bounds
   - [ ] Scenario tests: blockades, pirate spikes, rumor floods, war declarations

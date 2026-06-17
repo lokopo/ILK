@@ -44,7 +44,20 @@ def check_environment():
     return headless_score >= 2
 
 def setup_venv(logger):
-    """Setup virtual environment with better error handling."""
+    """Setup virtual environment with fallback to the current Python interpreter."""
+    def install_requirements(python_path):
+        logger.info("Installing requirements...")
+        result = subprocess.run(
+            [python_path, "-m", "pip", "install", "-r", "requirements.txt", "-q"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.warning(f"pip install had issues: {result.stderr.strip()}")
+        else:
+            logger.info("Requirements installed successfully")
+        return python_path
+
     try:
         if not os.path.exists("venv"):
             logger.info("Creating virtual environment...")
@@ -52,36 +65,23 @@ def setup_venv(logger):
             logger.info("Virtual environment created successfully")
         else:
             logger.info("Virtual environment already exists")
-        
-        # Determine the pip path based on the OS
+
         if sys.platform == "win32":
             pip_path = os.path.join("venv", "Scripts", "pip")
             python_path = os.path.join("venv", "Scripts", "python")
         else:
             pip_path = os.path.join("venv", "bin", "pip")
             python_path = os.path.join("venv", "bin", "python")
-        
-        # Check if pip exists
+
         if not os.path.exists(pip_path):
-            logger.error(f"pip not found at {pip_path}")
-            return None
-            
-        # Install requirements
-        logger.info("Installing requirements...")
-        result = subprocess.run([pip_path, "install", "-r", "requirements.txt"], 
-                                capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            logger.error(f"Failed to install requirements: {result.stderr}")
-            return None
-        else:
-            logger.info("Requirements installed successfully")
-            
-        return python_path
-        
+            logger.warning(f"pip not found at {pip_path}; using current Python")
+            return install_requirements(sys.executable)
+
+        return install_requirements(python_path)
+
     except Exception as e:
-        logger.error(f"Error setting up virtual environment: {e}")
-        return None
+        logger.warning(f"venv unavailable ({e}); using current Python")
+        return install_requirements(sys.executable)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -151,24 +151,23 @@ Examples:
     
     # Choose what to run
     if args.test:
-        if run_mode == "headless":
-            logger.info("Starting headless stability tests...")
-            script_name = "space_game_headless.py"
-            script_args = ["test"]
-        else:
-            logger.info("Starting GUI tests...")
-            script_name = "space_game.py"
-            script_args = []
-            os.environ['GAME_TEST_MODE'] = '1'
+        logger.info("Starting engine smoke test + mock stability tests...")
+        script_name = "smoke_test.py"
+        script_args = []
+        # Also run legacy mock tests for regression coverage
+        mock_result = subprocess.run([python_path, "headless_game_test.py"], capture_output=False, text=True)
+        if mock_result.returncode != 0:
+            return mock_result.returncode
+    elif run_mode == "headless":
+        logger.info("Starting headless game mode (real engine)...")
+        script_name = "space_game.py"
+        script_args = []
+        os.environ['GAME_HEADLESS_MODE'] = '1'
     else:
-        if run_mode == "headless":
-            logger.info("Starting headless game mode...")
-            script_name = "space_game_headless.py"
-            script_args = ["interactive"]
-        else:
-            logger.info("Starting GUI game mode...")
-            script_name = "space_game.py"
-            script_args = []
+        logger.info("Starting GUI game mode...")
+        script_name = "space_game.py"
+        script_args = []
+        os.environ.pop('GAME_HEADLESS_MODE', None)
     
     # Set environment variables for the game
     os.environ['GAME_VERBOSE'] = '1' if args.verbose else '0'
