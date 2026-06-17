@@ -7,10 +7,12 @@
 ---
 
 ## ✨ **PROJECT STATUS**
-**🎯 PRODUCTION READY** - All systems fully implemented and tested!  
-**🧪 100% Test Coverage** - Comprehensive automated testing suite  
-**📚 Complete Documentation** - Exhaustive guides and architecture docs  
-**🚀 Multiple Play Modes** - 3D graphics, headless text, and demo modes  
+**🎯 Playable Alpha (v0.9.x)** — Core 3D game runs; economy, factions, transport, and combat systems are implemented.  
+**🧪 Engine smoke tests** — `smoke_test.py` runs 600+ ticks against the real `space_game.py` engine (headless).  
+**📚 Extensive documentation** — Architecture guides, indexes, and developer onboarding docs.  
+**🚀 Play modes** — 3D graphics (`space_game.py`), headless engine (`GAME_HEADLESS_MODE=1`), text demo (`space_game_playable_headless.py`).
+
+**Recent fixes (Jun 2026):** Pirate-raid crash (`EnhancedPlanetEconomy.record_pirate_attack`), headless mock colors, launcher venv fallback, real-engine smoke test.
 
 ---
 
@@ -146,9 +148,13 @@
 python run_me.py
 
 # With specific options
-python run_me.py --headless    # Headless mode (no graphics)
-python run_me.py --test        # Run stability tests
+python run_me.py --headless    # Headless engine (real space_game.py, no graphics)
+python run_me.py --test        # Engine smoke test + mock stability tests
 python run_me.py --verbose     # Enable verbose logging
+
+# Direct engine smoke test (recommended for CI)
+python smoke_test.py
+GAME_SMOKE_TICKS=3000 python smoke_test.py   # longer simulation
 ```
 
 #### **Option 2: Manual Setup**
@@ -159,8 +165,11 @@ pip install -r requirements.txt
 # Run the game
 python space_game.py
 
-# Run headless version
-python space_game_headless.py
+# Run headless engine directly
+GAME_HEADLESS_MODE=1 python space_game.py
+
+# Run engine smoke test
+python smoke_test.py
 ```
 
 #### **Option 3: Demo Mode**
@@ -291,21 +300,20 @@ ILK/
 - **3 Game Modes** (3D, Headless, Demo)
 
 ### **Quality Assurance**
-- **100% Test Coverage** - All systems tested and validated
-- **Production Ready** - All features implemented and stable
-- **Comprehensive Documentation** - Every component documented
-- **Performance Optimized** - Efficient algorithms and data structures
-- **Cross-Platform** - Windows, macOS, and Linux support
+- **Engine smoke test** — `smoke_test.py` exercises the real game loop headlessly (600+ ticks)
+- **Mock regression tests** — `headless_game_test.py`, `COMPREHENSIVE_SYSTEM_TEST.py` (isolated mocks)
+- **Playable alpha** — Feature-rich but not yet a polished 1.0; see `ROADMAP_COMPLETION_CHECKLIST.md`
+- **Cross-Platform** — Windows, macOS, and Linux (Ursina/OpenGL required for 3D mode)
 
 ---
 
 ## 🎯 **DEVELOPMENT ROADMAP**
 
-### **Current Status: Production Ready**
-- ✅ All core systems implemented and tested
-- ✅ Comprehensive documentation completed
-- ✅ Super thorough commenting throughout codebase
-- ✅ Complete accessibility resources for newcomers and LLMs
+### **Current Status: Playable Alpha (v0.9.x)**
+- ✅ Core systems implemented in `space_game.py` (~10k lines)
+- ✅ Engine smoke test passes (headless simulation ticks)
+- ✅ 3D mode launches and runs without immediate crash (Ursina)
+- ⬜ 1.0 polish items tracked in `ROADMAP_COMPLETION_CHECKLIST.md` (tutorial, audio, CI, etc.)
 
 ### **Accessibility Enhancements (Latest)**
 - ✅ **New Developer Guide** - 30-minute onboarding for beginners
